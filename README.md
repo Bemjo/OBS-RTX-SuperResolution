@@ -5,26 +5,26 @@ An Open Broadcaster Software (OBS) plugin to enable nVidia RTX Video Super Resol
 https://blogs.nvidia.com/blog/2023/02/28/rtx-video-super-resolution/
 
 Prequisites:
-* You must install the nVidia Video Effects SDK for your GPU here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/
+* OBS version 29.1.2 or higher
+* An nVidia RTX GPU (2060 or better)
+* Windows. Linux and MacOS are not supported currently.
+* The nVidia Video Effects SDK for your GPU, this can be obtained here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/
 
 Installation:
 * Copy the files over your obs-studio installation folder
 
 Features:
-
   nVidia Artifact Reduction Filter pre-pass: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#artifact-red-filter
 
   nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter
 
   nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter
 
-
 Todo:
-  Optimizations around rendering and effect transfers, and settings changes.
-
+  Removal of an OBS rendering pass
   Better notifications and warnings for the user regarding errors with source resolutions and scaling.
 
-  -- The filters are VERY particular about the resolutions they will accept sometimes, only giving a generic NVCV_ERR_RESOLUTION error if the dimensions are wrong even though they pass the checks.
+
 
 ## Build System Configuration
 

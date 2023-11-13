@@ -32,8 +32,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define info(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 #define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
 
-#ifdef _DEBUG
-#define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
+#if defined(_DEBUG) || defined(DEBUG)
+#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
 #else
 #define debug(format, ...)
 #endif
@@ -95,6 +95,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
 
+
+
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
 /* Usable everywhere except load_nv_superresolution_filter */
 static bool nvvfx_loaded = false;
@@ -105,10 +107,6 @@ static bool nvvfx_supports_up = false;
 static obs_property_t *g_invalid_warning = NULL;
 static obs_property_t *g_invalid_warning_ar = NULL;
 static obs_property_t *g_invalid_warning_sr = NULL;
-
-// scaling factor used for artifact reduction, RGB channels for AR MUST fall between [0,1]
-const float nv_fx_ar_color_scale = 1.0f / 255.0f;
-const float nv_fx_ar_color_invscale = 255.0f;
 
 // while the filter allows for non 16:9 aspect ratios, these 16:9 values are used to validate input source sizes
 // so even though a 4:3 source may be provided that has the same pixel count as a 16:9 source -
@@ -336,18 +334,21 @@ static void nv_destroy_fx_filter(NvVFX_Handle *fx, NvCVImage **src, NvCVImage **
 {
 	if (src && *src)
 	{
+		debug("nv_destroy_fx_filter: destorying src %X", *src);
 		NvCVImage_Destroy(*src);
 		*src = NULL;
 	}
 
 	if (dst && *dst)
 	{
+		debug("nv_destroy_fx_filter: destorying dst %X", *dst);
 		NvCVImage_Destroy(*dst);
 		*dst = NULL;
 	}
 
 	if (fx && *fx)
 	{
+		debug("nv_destroy_fx_filter: destorying fx %X", *fx);
 		NvVFX_DestroyEffect(*fx);
 		*fx = NULL;
 	}
@@ -363,6 +364,8 @@ static void nv_destroy_fx_filter(NvVFX_Handle *fx, NvCVImage **src, NvCVImage **
 */ 
 static void nv_superres_filter_actual_destroy(void *data)
 {
+	debug("nv_superres_filter_actual_destroy: entered");
+
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 
 	if (!nvvfx_loaded)
@@ -373,7 +376,9 @@ static void nv_superres_filter_actual_destroy(void *data)
 
 	os_atomic_set_bool(&filter->processing_stopped, true);
 
-	// SMP spinlock to prevent destroying things while in the middle of the FX processing pipeline
+	// SMP busy-spinlock to prevent destroying things while in the middle of the FX processing pipeline
+	// This should only ever have to wait for a single frame to finish being processed before we can proceed as
+	// the above atomic set is our lockout for further processing
 	while (filter->is_processing);
 
 	nv_destroy_fx_filter(&filter->ar_handle, &filter->gpu_ar_src_img, &filter->gpu_ar_dst_img);
@@ -389,20 +394,24 @@ static void nv_superres_filter_actual_destroy(void *data)
 
 	obs_enter_graphics();
 
-	if (filter->scaled_texture) {
+	if (filter->scaled_texture)
+	{
 		gs_texture_destroy(filter->scaled_texture);
 		filter->scaled_texture = NULL;
 	}
-	if (filter->render) {
+	if (filter->render)
+	{
 		gs_texrender_destroy(filter->render);
 		filter->render = NULL;
 	}
-	if (filter->render_unorm) {
+	if (filter->render_unorm)
+	{
 		gs_texrender_destroy(filter->render_unorm);
 		filter->render_unorm = NULL;
 	}
 
-	if (filter->effect) {
+	if (filter->effect)
+	{
 		gs_effect_destroy(filter->effect);
 		filter->effect = NULL;
 	}
@@ -410,6 +419,8 @@ static void nv_superres_filter_actual_destroy(void *data)
 	obs_leave_graphics();
 
 	bfree(filter);
+
+	debug("nv_superres_filter_actual_destroy: exiting");
 }
 
 
@@ -512,8 +523,16 @@ static bool create_nvfx(struct nv_superresolution_data *filter, NvVFX_Handle *ha
 
 static bool load_ar_fx(struct nv_superresolution_data *filter)
 {
+	debug("load_ar_fx: entering");
+
 	NvCV_Status vfxErr = NvVFX_SetU32(filter->ar_handle, NVVFX_MODE, filter->ar_mode);
 	nv_error_nr(vfxErr, "Failed to set AR mode", filter, false);
+
+	vfxErr = NvVFX_SetImage(filter->ar_handle, NVVFX_INPUT_IMAGE, filter->gpu_ar_src_img);
+	nv_error(vfxErr, "Failed to set input image for Artifact Reduction filter", filter, false);
+
+	vfxErr = NvVFX_SetImage(filter->ar_handle, NVVFX_OUTPUT_IMAGE, filter->gpu_ar_dst_img);
+	nv_error(vfxErr, "Failed to set output image for Artifact Reduction filter", filter, false);
 
 	vfxErr = NvVFX_Load(filter->ar_handle);
 
@@ -535,6 +554,7 @@ static bool load_ar_fx(struct nv_superresolution_data *filter)
 	obs_property_set_visible(g_invalid_warning_ar, false);
 	filter->reload_ar_fx = false;
 
+	debug("load_ar_fx: exiting");
 	return true;
 }
 
@@ -542,6 +562,7 @@ static bool load_ar_fx(struct nv_superresolution_data *filter)
 
 static bool load_sr_fx(struct nv_superresolution_data *filter)
 {
+	debug("load_sr_fx: entering");
 	NvCV_Status vfxErr;
 
 	if (filter->type == S_TYPE_UP)
@@ -554,6 +575,12 @@ static bool load_sr_fx(struct nv_superresolution_data *filter)
 		vfxErr = NvVFX_SetU32(filter->sr_handle, NVVFX_MODE, filter->sr_mode);
 		nv_error_nr(vfxErr, "Failed to set SR mode", filter, false);
 	}
+
+	vfxErr = NvVFX_SetImage(filter->sr_handle, NVVFX_INPUT_IMAGE, filter->gpu_sr_src_img);
+	nv_error(vfxErr, "Error setting SuperRes input image", filter, false);
+
+	vfxErr = NvVFX_SetImage(filter->sr_handle, NVVFX_OUTPUT_IMAGE, filter->gpu_sr_dst_img);
+	nv_error(vfxErr, "Error setting SuperRes output image", filter, false);
 
 	vfxErr = NvVFX_Load(filter->sr_handle);
 
@@ -575,14 +602,17 @@ static bool load_sr_fx(struct nv_superresolution_data *filter)
 	obs_property_set_visible(g_invalid_warning_sr, false);
 	filter->reload_sr_fx = false;
 
+	debug("load_sr_fx: exiting");
 	return true;
 }
 
 
 
-/* Destroys the cuda stream, and FX handles, then flags them for recreation*/
+/* Creates a new CUDA stream for the filter, desytroying the previous one if it exists */
 static bool create_cuda(struct nv_superresolution_data *filter)
 {
+	debug("create_cuda: entering");
+
 	if (filter->stream)
 	{
 		NvVFX_CudaStreamDestroy(filter->stream);
@@ -592,28 +622,33 @@ static bool create_cuda(struct nv_superresolution_data *filter)
 	NvCV_Status vfxErr = NvVFX_CudaStreamCreate(&filter->stream);
 	nv_error(vfxErr, "Failed to create NvVFX CUDA Stream: %i", filter, true);
 
+	debug("create_cuda: exiting");
 	return true;
 }
 
 
 
+/* Creates the NvFX filters that are needed
+* This has the side consequence of requiring NvCVImage buffers to be created or reallocated
+* return - True if there are no errors or if nothing was created. False if there was an error.
+*/
 static bool initialize_fx(struct nv_superresolution_data *filter)
 {
 	bool success = true;
 
 	if (success && filter->apply_ar && !filter->ar_handle)
 	{
+		debug("initialize_fx: creating AR fx");
 		success = create_nvfx(filter, &filter->ar_handle, NVVFX_FX_ARTIFACT_REDUCTION);
 		filter->are_images_allocated = false;
-		filter->reload_ar_fx = true;
 	}
 
 	if (success && filter->type != S_TYPE_NONE && !filter->sr_handle)
 	{
+		debug("initialize_fx: creating SR fx");
 		const char *FX = filter->type == S_TYPE_SR ? NVVFX_FX_SUPER_RES : NVVFX_FX_SR_UPSCALE;
 		success = create_nvfx(filter, &filter->sr_handle, FX);
 		filter->are_images_allocated = false;
-		filter->reload_sr_fx = true;
 	}
 
 	return success;
@@ -638,36 +673,42 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 	{
 		filter->type = type;
 		filter->destroy_sr = true;
+		filter->reload_sr_fx = true;
+		debug("Update: Filter type changed");
 	}
 
 	if (filter->sr_mode != sr_mode)
 	{
 		filter->sr_mode = sr_mode;
 		filter->reload_sr_fx = true;
+		debug("Update: Super Res mode changed");
 	}
 
 	if (filter->apply_ar != apply_ar)
 	{
 		filter->apply_ar = apply_ar;
+		debug("Update: AR changed");
 
 		if (!apply_ar)
 		{
+			debug("Update: AR disabled");
 			filter->destroy_ar = true;
 		}
 		else
 		{
-			filter->reload_ar_fx = true;
+			debug("Update: AR enabled");
 		}
+
+		filter->reload_ar_fx = true;
 	}
 
 	int ar_mode = (int)obs_data_get_int(settings, S_MODE_AR);
+
 	if (filter->apply_ar && filter->ar_mode != ar_mode)
 	{
-		if (filter->ar_mode != ar_mode)
-		{
 			filter->ar_mode = ar_mode;
 			filter->reload_ar_fx = true;
-		}
+			debug("Update: AR mode changed");
 	}
 
 	if (type == S_TYPE_UP)
@@ -677,6 +718,7 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 		{
 			filter->strength = strength;
 			filter->reload_sr_fx = true;
+			debug("Update: Upscaling strength changed");
 		}
 	}
 }
@@ -685,6 +727,8 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 
 static bool alloc_image_from_texture(struct nv_superresolution_data *filter, img_create_params_t *params, gs_texture_t *texture)
 {
+	debug("alloc_image_from_texture: entered");
+
 	struct ID3D11Texture2D *d11texture = (struct ID3D11Texture2D *)gs_texture_get_obj(texture);
 
 	if (!d11texture)
@@ -695,19 +739,24 @@ static bool alloc_image_from_texture(struct nv_superresolution_data *filter, img
 
 	NvCV_Status vfxErr;
 
-	/* Make sure that image buffer exists first, we're going to actually (re)alloc when we init from the d3d texture */
-	if (*(params->buffer) == NULL)
+	if (*(params->buffer) != NULL)
 	{
-		vfxErr = NvCVImage_Create(params->width, params->height,
-					  params->pixel_fmt, params->comp_type,
-					  params->layout, NVCV_GPU,
-					  params->alignment, params->buffer);
-		nv_error(vfxErr, "Error creating source NvCVImage", filter, false);
+		NvCVImage_Destroy(*(params->buffer));
 	}
 
+	debug("alloc_image_from_texture: creating new NvCVImage");
+
+	vfxErr = NvCVImage_Create(params->width, params->height,
+					params->pixel_fmt, params->comp_type,
+					params->layout, NVCV_GPU,
+					params->alignment, params->buffer);
+	nv_error(vfxErr, "Error creating source NvCVImage", filter, false);
+
+	debug("alloc_image_from_texture: initializing from d3d11 texture");
 	vfxErr = NvCVImage_InitFromD3D11Texture(*(params->buffer), d11texture);
 	nv_error(vfxErr, "Error allocating NvCVImage from ID3D11Texture", filter, false);
 
+	debug("alloc_image_from_texture: exiting");
 	return true;
 }
 
@@ -724,6 +773,7 @@ static bool alloc_image_from_texture(struct nv_superresolution_data *filter, img
 */
 static bool alloc_image_from_texrender(struct nv_superresolution_data *filter, img_create_params_t *params, gs_texrender_t *texture)
 {
+	debug("alloc_image_from_texrender");
 	return alloc_image_from_texture(filter, params, gs_texrender_get_texture(texture));
 }
 
@@ -737,6 +787,8 @@ static bool alloc_image_from_texrender(struct nv_superresolution_data *filter, i
 */
 static bool alloc_image(struct nv_superresolution_data* filter, img_create_params_t *params)
 {
+	debug("alloc_image: entered for buffer %X", *(params->buffer));
+
 	uint32_t create_width = params->width2 > 0 ? params->width2 : params->width;
 	uint32_t create_height = params->height2 > 0 ? params->height2 : params->height;
 	NvCV_Status vfx_err;
@@ -744,16 +796,19 @@ static bool alloc_image(struct nv_superresolution_data* filter, img_create_param
 	// If our NVFX Image exists, resize and reformat it
 	if (*(params->buffer) != NULL)
 	{
+		debug("alloc_image: realloc buffer %X", *(params->buffer));
+
 		vfx_err = NvCVImage_Realloc(
 			     *(params->buffer), create_width, create_height,
 			     params->pixel_fmt, params->comp_type,
 			     params->layout, NVCV_GPU, params->alignment);
 
 		nv_error(vfx_err, "Failed to re-allocate image buffer", filter, false);
-
 	}
 	else
 	{
+		debug("alloc_image: creating new NvCVImage buffer for %X", *(params->buffer));
+
 		vfx_err = NvCVImage_Create(
 			     create_width, create_height, params->pixel_fmt,
 			     params->comp_type, params->layout, NVCV_GPU,
@@ -761,6 +816,7 @@ static bool alloc_image(struct nv_superresolution_data* filter, img_create_param
 
 		nv_error(vfx_err, "Failed to create image buffer", filter, false);
 
+		debug("alloc_image: alloc buffer %X", *(params->buffer));
 		vfx_err = NvCVImage_Alloc(
 			     *(params->buffer), create_width, create_height,
 			     params->pixel_fmt, params->comp_type,
@@ -772,6 +828,8 @@ static bool alloc_image(struct nv_superresolution_data* filter, img_create_param
 		// This is the recommended method from the nVidia video effects SDK for allocating staging buffers
 		if (create_height != params->height || create_width != params->width)
 		{
+			debug("alloc_image: two-sized re-alloc buffer %X", *(params->buffer));
+
 			vfx_err = NvCVImage_Realloc(
 				     *(params->buffer), params->width,
 				     params->height,
@@ -782,6 +840,8 @@ static bool alloc_image(struct nv_superresolution_data* filter, img_create_param
 			nv_error(vfx_err, "Failed to resize image buffer", filter, false);
 		}
 	}
+
+	debug("alloc_image: exiting for buffer %X", *(params->buffer));
 
 	return true;
 }
@@ -796,6 +856,8 @@ static bool alloc_image(struct nv_superresolution_data* filter, img_create_param
 */
 static bool alloc_ar_images(struct nv_superresolution_data* filter)
 {
+	debug("alloc_ar_images: entering");
+
 	img_create_params_t ar_img =
 	{
 		.buffer = &filter->gpu_ar_src_img,
@@ -821,14 +883,9 @@ static bool alloc_ar_images(struct nv_superresolution_data* filter)
 		return false;
 	}
 
-	NvCV_Status vfxErr = NvVFX_SetImage(filter->ar_handle, NVVFX_INPUT_IMAGE, filter->gpu_ar_src_img);
-	nv_error(vfxErr, "Failed to set input image for Artifact Reduction filter", filter, false);
-
-	vfxErr = NvVFX_SetImage(filter->ar_handle, NVVFX_OUTPUT_IMAGE, filter->gpu_ar_dst_img);
-	nv_error(vfxErr, "Failed to set output image for Artifact Reduction filter", filter, false);
-
 	filter->reload_ar_fx = true;
 
+	debug("alloc_ar_images: entering");
 	return true;
 }
 
@@ -842,12 +899,16 @@ static bool alloc_ar_images(struct nv_superresolution_data* filter)
 */
 static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 {
+	debug("alloc_obs_textures: entering");
+
 	/* 3. create texrenders */
 	if (filter->render)
 	{
+		debug("alloc_obs_textures: destroying existing render texture");
 		gs_texrender_destroy(filter->render);
 	}
 
+	debug("alloc_obs_textures: creating render texture");
 	filter->render = gs_texrender_create(gs_get_format_from_space(filter->space), GS_ZS_NONE);
 
 	if (!filter->render)
@@ -858,9 +919,11 @@ static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 
 	if (filter->render_unorm)
 	{
+		debug("alloc_obs_textures: destroying existing render unorm texture");
 		gs_texrender_destroy(filter->render_unorm);
 	}
 
+	debug("alloc_obs_textures: creating render unorm texture");
 	filter->render_unorm = gs_texrender_create(GS_BGRA_UNORM, GS_ZS_NONE);
 
 	if (!filter->render_unorm)
@@ -871,6 +934,7 @@ static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 
 	filter->done_initial_render = false;
 
+	debug("alloc_obs_textures: exiting");
 	return true;
 }
 
@@ -879,6 +943,8 @@ static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 /* Allocates the Super Resolution source images, these are allocated anytime the target is resized, or the filter type changed */
 static bool alloc_sr_source_images(struct nv_superresolution_data *filter)
 {
+	debug("alloc_sr_source_images: entering");
+
 	if (!filter->is_target_valid)
 	{
 		return true;
@@ -890,17 +956,22 @@ static bool alloc_sr_source_images(struct nv_superresolution_data *filter)
 		.height = filter->height
 	};
 
-	if (filter->type == S_TYPE_SR) {
+	if (filter->type == S_TYPE_SR)
+	{
 		img.pixel_fmt = NVCV_BGR;
 		img.comp_type = NVCV_F32;
 		img.layout = NVCV_PLANAR;
 		img.alignment = 1;
-	} else if (filter->type == S_TYPE_UP) {
+	}
+	else if (filter->type == S_TYPE_UP)
+	{
 		img.pixel_fmt = NVCV_RGBA;
 		img.comp_type = NVCV_U8;
 		img.layout = NVCV_CHUNKY;
 		img.alignment = 32;
-	} else {
+	}
+	else
+	{
 		error("Attempted to allocate source image buffer for No Upscaler");
 	}
 
@@ -910,11 +981,9 @@ static bool alloc_sr_source_images(struct nv_superresolution_data *filter)
 		return false;
 	}
 
-	NvCV_Status vfxErr = NvVFX_SetImage(filter->sr_handle, NVVFX_INPUT_IMAGE, filter->gpu_sr_src_img);
-	nv_error(vfxErr, "Error setting SuperRes input image", filter, false);
-
 	filter->reload_sr_fx = true;
 
+	debug("alloc_sr_source_images: exiting");
 	return true;
 }
 
@@ -923,6 +992,8 @@ static bool alloc_sr_source_images(struct nv_superresolution_data *filter)
 /* Allocates the Super Resolution source images, these are allocated anytime the target is resized, the filter type changed, or the scale changed */
 static bool alloc_sr_dest_images(struct nv_superresolution_data* filter)
 {
+	debug("alloc_sr_dest_images: entering");
+
 	if (!filter->is_target_valid)
 	{
 		return true;
@@ -967,28 +1038,8 @@ static bool alloc_sr_dest_images(struct nv_superresolution_data* filter)
 		return false;
 	}
 
-	/* Finally allocate space for the final result temporary transfer buffer */
-	img.buffer = &filter->gpu_dst_tmp_img;
-	img.pixel_fmt = NVCV_RGBA;
-	img.comp_type = NVCV_U8;
-	img.layout = NVCV_CHUNKY;
-	img.alignment = 0;
-	img.width = filter->out_width;
-	img.height = filter->out_height;
-	img.width2 = 0;
-	img.height2 = 0;
-
-	if (!alloc_image(filter, &img))
-	{
-		error("Failed to allocate upscaled NvCVImage bufer");
-		return false;
-	}
-
-	NvCV_Status vfxErr = NvVFX_SetImage(filter->sr_handle, NVVFX_OUTPUT_IMAGE, filter->gpu_sr_dst_img);
-	nv_error(vfxErr, "Error setting SuperRes output image", filter, false);
-
 	filter->reload_sr_fx = true;
-
+	debug("alloc_sr_dest_images: exiting");
 	return true;
 }
 
@@ -998,6 +1049,8 @@ static bool alloc_sr_dest_images(struct nv_superresolution_data* filter)
 /* @return - false if there's any error, true otherwise */
 static bool alloc_nvfx_images(struct nv_superresolution_data *filter)
 {
+	debug("alloc_nvfx_images: entering");
+
 	if (filter->ar_handle)
 	{
 		if (!alloc_ar_images(filter))
@@ -1021,6 +1074,32 @@ static bool alloc_nvfx_images(struct nv_superresolution_data *filter)
 			return false;
 		}
 	}
+
+	// This temporary image is not required if using Upscaling.
+	// If using only AR, or using SR at all this IS required as an intermediate step for BGRf32 -> D3D11 RGBAu8 conversion
+	if (filter->type != S_TYPE_UP)
+	{
+		debug("alloc_nvfx_images: creaing dst_tmp_img");
+		img_create_params_t img = {
+			.buffer = &filter->gpu_dst_tmp_img,
+			.pixel_fmt = NVCV_RGBA,
+			.comp_type = NVCV_U8,
+			.layout = NVCV_CHUNKY,
+			.alignment = 0,
+			.width = filter->out_width,
+			.height = filter->out_height,
+			.width2 = 0,
+			.height2 = 0
+		};
+
+		if (!alloc_image(filter, &img))
+		{
+			error("Failed to allocate conversion buffer for AR or SR pass");
+			return false;
+		}
+	}
+
+	debug("alloc_nvfx_images: exiting");
 
 	return true;
 }
@@ -1072,6 +1151,8 @@ static bool alloc_destination_image(struct nv_superresolution_data* filter)
 * Used in both initialization and render tick to ensure things are created before use */
 static bool init_images(struct nv_superresolution_data* filter)
 {
+	debug("init_images: entering");
+
 	if (!alloc_obs_textures(filter))
 	{
 		return false;
@@ -1089,6 +1170,8 @@ static bool init_images(struct nv_superresolution_data* filter)
 
 	filter->are_images_allocated = true;
 
+	debug("init_images: exiting");
+
 	return true;
 }
 
@@ -1101,7 +1184,7 @@ static void nv_superres_filter_reset(void *data, calldata_t *calldata)
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 
-	debug("Source resetting...");
+	debug("nv_superres_filter_reset: Entering");
 
 	if (!filter)
 	{
@@ -1111,7 +1194,7 @@ static void nv_superres_filter_reset(void *data, calldata_t *calldata)
 
 	os_atomic_set_bool(&filter->processing_stopped, true);
 
-	debug("Source reset recreate CUDA stream");
+	debug("nv_superres_filter_reset: Source reset recreate CUDA stream");
 	if (!create_cuda(filter))
 	{
 		return;
@@ -1123,7 +1206,7 @@ static void nv_superres_filter_reset(void *data, calldata_t *calldata)
 
 	os_atomic_set_bool(&filter->processing_stopped, false);
 
-	debug("Source reset");
+	debug("nv_superres_filter_reset: Entering");
 }
 
 
@@ -1150,7 +1233,7 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 	* Ideally the staging -> dst_tmp_img -> staging -> dst_img should not have to take place and should just be staging -> dst_img
 	*/
 
-	NvCVImage *destination = filter->gpu_dst_tmp_img;
+	NvCVImage *destination = filter->dst_img;
 
 	if (filter->ar_handle)
 	{
@@ -1161,7 +1244,7 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 		destination = filter->gpu_sr_src_img;
 	}
 
-	/* Do transfer of src_img to first stage source */
+	/* Have to map the D3D buffers before your manipulate them, and unmap before D3D is allowed to take over again */
 	NvCV_Status vfxErr = NvCVImage_MapResource(filter->src_img, filter->stream);
 	nv_error(vfxErr, "Error mapping resource for source texture", filter, false);
 
@@ -1203,10 +1286,11 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 
 		nv_error(vfxErr, "Error running the NvVFX Super Resolution stage.", filter, false);
 
-		if (filter->type == S_TYPE_UP)
+		if (!filter->gpu_dst_tmp_img)
 		{
+			/* Have to map the D3D buffers before your manipulate them, and unmap before D3D is allowed to take over again */
 			destination = filter->dst_img;
-			vfxErr = NvCVImage_MapResource(destination, filter->stream);
+			vfxErr = NvCVImage_MapResource(filter->dst_img, filter->stream);
 			nv_error(vfxErr, "Error mapping resource for dst texture", filter, false);
 		}
 		else
@@ -1220,9 +1304,9 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 		vfxErr = NvCVImage_Transfer(filter->gpu_sr_dst_img, destination, filter->ar_handle && filter->type == S_TYPE_SR ? 255.0f : 1.0f, filter->stream, filter->gpu_staging_img);
 		nv_error(vfxErr, "Error transfering super resolution upscaled texture to destination buffer", filter, false);
 
-		if (filter->type == S_TYPE_UP)
+		if (!filter->gpu_dst_tmp_img)
 		{
-			vfxErr = NvCVImage_UnmapResource(destination, filter->stream);
+			vfxErr = NvCVImage_UnmapResource(filter->dst_img, filter->stream);
 			nv_error(vfxErr, "Error unmapping resource for dst texture", filter, false);
 		}
 	}
@@ -1231,25 +1315,17 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 	* 4. Do the final dst_tmp_img -> staging -> dst_img transfer
 	* This stage is only required when doing BGR/Planar to a D3D11 texture, as GPU->CUDA_ARRAY transfers in that format are not supported
 	*/
-	if (filter->type != S_TYPE_UP)
+	if (filter->gpu_dst_tmp_img)
 	{
+		/* Have to map the D3D buffers before your manipulate them, and unmap before D3D is allowed to take over again */
 		vfxErr = NvCVImage_MapResource(filter->dst_img, filter->stream);
-		nv_error(vfxErr, "Error mapping resource for dst texture",
-			 filter, false);
+		nv_error(vfxErr, "Error mapping resource for dst texture", filter, false);
 
-		vfxErr = NvCVImage_Transfer(filter->gpu_dst_tmp_img,
-					    filter->dst_img, 1.0f,
-					    filter->stream,
-					    filter->gpu_staging_img);
-		nv_error(
-			vfxErr,
-			"Error transferring temporary image buffer to final dest buffer",
-			filter, false);
+		vfxErr = NvCVImage_Transfer(filter->gpu_dst_tmp_img, filter->dst_img, 1.0f, filter->stream, filter->gpu_staging_img);
+		nv_error(vfxErr, "Error transferring temporary image buffer to final dest buffer", filter, false);
 
-		vfxErr = NvCVImage_UnmapResource(filter->dst_img,
-						 filter->stream);
-		nv_error(vfxErr, "Error unmapping resource for dst texture",
-			 filter, false);
+		vfxErr = NvCVImage_UnmapResource(filter->dst_img, filter->stream);
+		nv_error(vfxErr, "Error unmapping resource for dst texture", filter, false);
 	}
 
 	return true;
@@ -1268,7 +1344,7 @@ static bool reload_fx(struct nv_superresolution_data* filter)
 		return false;
 	}
 
-	if (filter->reload_sr_fx && filter->sr_handle && !load_sr_fx(filter))
+	if ((nvvfx_supports_sr || nvvfx_supports_up) && filter->reload_sr_fx && filter->sr_handle && !load_sr_fx(filter))
 	{
 		error("Failed to load the selected NvVFX %d", filter->type);
 		return false;
@@ -1283,16 +1359,19 @@ static void* nv_superres_filter_create(obs_data_t* settings, obs_source_t* conte
 {
 	struct nv_superresolution_data* filter = (struct nv_superresolution_data*)bzalloc(sizeof(*filter));
 
+	debug("nv_superres_filter_create: Entering");
+
 	/* Does this filter exist already on a source, but the vfx sdk libraries weren't found? Let's leave. */
 	if (!nvvfx_loaded)
 	{
 		nv_superres_filter_destroy(filter);
+		debug("nv_superres_filter_create: Failed, NvVFX SDK not installed, or RTX GPU not found");
 		return NULL;
 	}
 
 	filter->context = context;
 	filter->sr_mode = S_MODE_WEAK;
-	filter->type = S_TYPE_SR;
+	filter->type = S_TYPE_NONE;
 	filter->show_size_error = true;
 	filter->scale = S_SCALE_15x;
 	filter->strength = S_STRENGTH_DEFAULT;
@@ -1335,6 +1414,8 @@ static void* nv_superres_filter_create(obs_data_t* settings, obs_source_t* conte
 		error("Failed to initialize filter, couldn't create FX");
 		return NULL;
 	}
+
+	debug("nv_superres_filter_create: exiting");
 
 	return filter;
 }
@@ -1545,6 +1626,8 @@ static void nv_superres_filter_tick(void *data, float t)
 	/* As the source size has changed, we need to flag ALL the image buffers to be reloaded */
 	if (cx != filter->width || cy != filter->height || cx_out != filter->out_width || cy_out != filter->out_height)
 	{
+		debug("nv_superres_filter_tick: source size changed, or scale changed");
+
 		filter->width = cx;
 		filter->height = cy;
 		filter->out_width = cx_out;
@@ -1736,6 +1819,8 @@ static void render_source_to_render_tex(struct nv_superresolution_data *filter, 
 
 	if (!filter->done_initial_render)
 	{
+		debug("render_source_to_render_tex: doing initial texture render");
+
 		img_create_params_t params = {
 			.buffer = &filter->src_img,
 			.width = filter->width,
@@ -1754,15 +1839,18 @@ static void render_source_to_render_tex(struct nv_superresolution_data *filter, 
 
 static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 {
-	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
+	// TODO: Consider just using the provided effect to draw the final output instead of our custom superresolution effect
+	UNUSED_PARAMETER(effect);
 
-	filter->is_processing = true;
+	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 
 	if (filter->processing_stopped)
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
+
+	filter->is_processing = true;
 
 	obs_source_t *const target = obs_filter_get_target(filter->context);
 	obs_source_t *const parent = obs_filter_get_parent(filter->context);
@@ -1790,12 +1878,24 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 
 	if (filter->destroy_ar)
 	{
+		debug("nv_superres_filter_render: Destroying AR");
+
 		nv_destroy_fx_filter(&filter->ar_handle, &filter->gpu_ar_src_img, &filter->gpu_ar_dst_img);
 		filter->destroy_ar = false;
 	}
 
 	if (filter->destroy_sr)
 	{
+		debug("nv_superres_filter_render: Destroying SR");
+
+		if (filter->gpu_dst_tmp_img)
+		{
+			debug("nv_superres_filter_render: Destroying Upscale texture");
+
+			NvCVImage_Destroy(filter->gpu_dst_tmp_img);
+			filter->gpu_dst_tmp_img = NULL;
+		}
+
 		nv_destroy_fx_filter(&filter->sr_handle, &filter->gpu_sr_src_img, &filter->gpu_sr_dst_img);
 		filter->destroy_sr = false;
 	}
@@ -1806,7 +1906,7 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 		goto cleanup;
 	}
 
-			/* Skip drawing if the user has turned everything off */
+	/* Skip drawing if the user has turned everything off */
 	if (!filter->ar_handle && !filter->sr_handle)
 	{
 		obs_source_skip_video_filter(filter->context);
@@ -1824,6 +1924,8 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 
 	if (filter->space != source_space || !filter->are_images_allocated)
 	{
+		debug("nv_superres_filter_render: Initializing Images");
+
 		filter->space = source_space;
 		if (!init_images(filter))
 		{
@@ -1876,9 +1978,6 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 
 cleanup:
 	filter->is_processing = false;
-
-	// TODO: Consider just using the provided effect to draw the final output instead of our custom superresolution effect
-	//UNUSED_PARAMETER(effect);
 }
 
 
@@ -1962,6 +2061,7 @@ struct obs_source_info nvidia_superresolution_filter_info =
 
 bool load_nv_superresolution_filter(void)
 {
+	debug("load_nv_superresolution_filter: Entering");
 	const char *cstr = NULL;
 	NvCV_Status err = NvVFX_GetString(NULL, NVVFX_INFO, &cstr);
 
@@ -1993,6 +2093,7 @@ bool load_nv_superresolution_filter(void)
 			info("[NVIDIA VIDEO FX SUPERRES]: Error %i", err);
 		}
 	}
-	
+
+	debug("load_nv_superresolution_filter: exiting");
 	return nvvfx_loaded;
 }
