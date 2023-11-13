@@ -45,8 +45,8 @@
       }
   },
     "name": "obs-rtx_superresolution",
-    "version": "0.8.0",
-    "author": "Jolly Beardo",
+    "version": "0.9.0",
+    "author": "Ben Jolley",
     "website": "https://github.com/TheJollyBeardo/OBS_RTX_SuperResolution",
     "email": "",
     "uuids": {
