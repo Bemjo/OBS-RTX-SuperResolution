@@ -66,6 +66,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define S_STRENGTH "strength"
 #define S_STRENGTH_DEFAULT 0.4f
 
+#define S_LIMITFPS "limitfps"
+
 #define S_INVALID_WARNING "warning"
 #define S_INVALID_WARNING_AR "warning_ar"
 #define S_INVALID_WARNING_SR "warning_sr"
@@ -94,7 +96,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_INVALID_WARNING MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
-
+#define TEXT_LIMIT_FRAMERATE MT_("SuperResolution.LimitFPS")
 
 
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
@@ -146,6 +148,7 @@ struct nv_superresolution_data
 	bool destroy_sr;
 	bool is_processing;
 	bool destroying;
+	bool limitToVideoInputRate;
 
 	/* RTX SDK vars */
 	unsigned int version;
@@ -375,11 +378,6 @@ static void nv_superres_filter_actual_destroy(void *data)
 	}
 
 	os_atomic_set_bool(&filter->processing_stopped, true);
-
-	// SMP busy-spinlock to prevent destroying things while in the middle of the FX processing pipeline
-	// This should only ever have to wait for a single frame to finish being processed before we can proceed as
-	// the above atomic set is our lockout for further processing
-	while (filter->is_processing);
 
 	nv_destroy_fx_filter(&filter->ar_handle, &filter->gpu_ar_src_img, &filter->gpu_ar_dst_img);
 	nv_destroy_fx_filter(&filter->sr_handle, &filter->gpu_sr_src_img, &filter->gpu_sr_dst_img);
@@ -668,6 +666,7 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 	int sr_mode = (int)obs_data_get_int(settings, S_MODE_SR);
 	bool apply_ar = obs_data_get_bool(settings, S_ENABLE_AR);
 	filter->scale = (int)obs_data_get_int(settings, S_SCALE);
+	filter->limitToVideoInputRate = obs_data_get_bool(settings, S_LIMITFPS);
 
 	if (filter->type != type)
 	{
@@ -1508,6 +1507,8 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_STRONG, S_MODE_STRONG);
 	}
 
+	obs_property_t *limit_fps =	obs_properties_add_bool(props, S_LIMITFPS, TEXT_LIMIT_FRAMERATE);
+
 	g_invalid_warning = obs_properties_add_text(props, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
 	obs_property_set_visible(g_invalid_warning, !filter->is_target_valid);
 
@@ -1544,6 +1545,8 @@ static void nv_superres_filter_defaults(obs_data_t *settings)
 	{
 		obs_data_set_default_double(settings, S_STRENGTH, S_STRENGTH_DEFAULT);
 	}
+
+	obs_data_set_default_bool(settings, S_LIMITFPS, false);
 }
 
 
@@ -1559,6 +1562,10 @@ static struct obs_source_frame *nv_superres_filter_video(void *data, struct obs_
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 	filter->got_new_frame = true;
+	if (filter->limitToVideoInputRate)
+	{
+		filter->processed_frame = false;
+	}
 	return frame;
 }
 
@@ -1635,7 +1642,10 @@ static void nv_superres_filter_tick(void *data, float t)
 		filter->are_images_allocated = false;
 	}
 
-	filter->processed_frame = false;
+	if (!filter->limitToVideoInputRate)
+	{
+		filter->processed_frame = false;
+	}
 }
 
 
@@ -1850,8 +1860,6 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 		return;
 	}
 
-	filter->is_processing = true;
-
 	obs_source_t *const target = obs_filter_get_target(filter->context);
 	obs_source_t *const parent = obs_filter_get_parent(filter->context);
 
@@ -1859,14 +1867,14 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 	if (!filter->is_target_valid || !target || !parent)
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
 
 	/* We've already processed the last frame we got and we haven't seen a new one, just draw what we've already done */
 	if (filter->processed_frame)
 	{
 		draw_superresolution(filter);
-		goto cleanup;
+		return;
 	}
 
 	/* Ensure we've got our signal handlers setup if our source is valid */
@@ -1903,14 +1911,14 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 	if (!initialize_fx(filter))
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
 
 	/* Skip drawing if the user has turned everything off */
 	if (!filter->ar_handle && !filter->sr_handle)
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
 
 	const enum gs_color_space preferred_spaces[] =
@@ -1930,21 +1938,21 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 		if (!init_images(filter))
 		{
 			obs_source_skip_video_filter(filter->context);
-			goto cleanup;
+			return;
 		}
 	}
 
 	if (!reload_fx(filter))
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
 
 		/* We're waiting for the source to report a valid size for the render textures to be ready. We cannot continue until they are. */
 	if (!filter->render)
 	{
 		obs_source_skip_video_filter(filter->context);
-		goto cleanup;
+		return;
 	}
 
 	const uint32_t target_flags = obs_source_get_output_flags(target);
@@ -1975,9 +1983,6 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 	{
 		obs_source_skip_video_filter(filter->context);
 	}
-
-cleanup:
-	filter->is_processing = false;
 }
 
 
