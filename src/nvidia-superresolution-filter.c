@@ -96,8 +96,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_INVALID_WARNING MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
-#define TEXT_LIMIT_FRAMERATE MT_("SuperResolution.LimitFPS")
-#define TEXT_LIMIT_FPS_DESC MT_("SuperResolution.LimitFPSDesc")
 
 
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
@@ -149,7 +147,6 @@ struct nv_superresolution_data
 	bool destroy_sr;
 	bool is_processing;
 	bool destroying;
-	bool limitToVideoInputRate;
 
 	/* RTX SDK vars */
 	unsigned int version;
@@ -667,7 +664,6 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 	int sr_mode = (int)obs_data_get_int(settings, S_MODE_SR);
 	bool apply_ar = obs_data_get_bool(settings, S_ENABLE_AR);
 	filter->scale = (int)obs_data_get_int(settings, S_SCALE);
-	filter->limitToVideoInputRate = obs_data_get_bool(settings, S_LIMITFPS);
 
 	if (filter->type != type)
 	{
@@ -1508,9 +1504,6 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_STRONG, S_MODE_STRONG);
 	}
 
-	obs_property_t *limit_fps =	obs_properties_add_bool(props, S_LIMITFPS, TEXT_LIMIT_FRAMERATE);
-	obs_property_set_long_description(limit_fps, TEXT_LIMIT_FPS_DESC);
-
 	g_invalid_warning = obs_properties_add_text(props, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
 	obs_property_set_visible(g_invalid_warning, false);
 	obs_property_text_set_info_type(g_invalid_warning, OBS_TEXT_INFO_WARNING);
@@ -1567,10 +1560,6 @@ static struct obs_source_frame *nv_superres_filter_video(void *data, struct obs_
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 	filter->got_new_frame = true;
-	if (filter->limitToVideoInputRate)
-	{
-		filter->processed_frame = false;
-	}
 	return frame;
 }
 
@@ -1647,10 +1636,7 @@ static void nv_superres_filter_tick(void *data, float t)
 		filter->are_images_allocated = false;
 	}
 
-	if (!filter->limitToVideoInputRate)
-	{
-		filter->processed_frame = false;
-	}
+	filter->processed_frame = false;
 }
 
 
