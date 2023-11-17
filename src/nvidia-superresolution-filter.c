@@ -97,6 +97,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
 #define TEXT_LIMIT_FRAMERATE MT_("SuperResolution.LimitFPS")
+#define TEXT_LIMIT_FPS_DESC MT_("SuperResolution.LimitFPSDesc")
 
 
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
@@ -1508,15 +1509,19 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 	}
 
 	obs_property_t *limit_fps =	obs_properties_add_bool(props, S_LIMITFPS, TEXT_LIMIT_FRAMERATE);
+	obs_property_set_long_description(limit_fps, TEXT_LIMIT_FPS_DESC);
 
 	g_invalid_warning = obs_properties_add_text(props, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning, !filter->is_target_valid);
+	obs_property_set_visible(g_invalid_warning, false);
+	obs_property_text_set_info_type(g_invalid_warning, OBS_TEXT_INFO_WARNING);
 
 	g_invalid_warning_ar = obs_properties_add_text(props, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning_ar, !filter->is_target_valid);
+	obs_property_set_visible(g_invalid_warning_ar, false);
+	obs_property_text_set_info_type(g_invalid_warning_ar, OBS_TEXT_INFO_WARNING);
 
 	g_invalid_warning_sr = obs_properties_add_text(props, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning_sr, !filter->is_target_valid);
+	obs_property_set_visible(g_invalid_warning_sr, false);
+	obs_property_text_set_info_type(g_invalid_warning_sr, OBS_TEXT_INFO_WARNING);
 
 	return props;
 }
