@@ -1198,6 +1198,8 @@ static void nv_superres_filter_reset(void *data, calldata_t *calldata)
 
 	filter->destroy_ar = true;
 	filter->destroy_sr = true;
+	filter->reload_ar_fx = true;
+	filter->reload_sr_fx = true;
 	filter->are_images_allocated = false;
 
 	os_atomic_set_bool(&filter->processing_stopped, false);
@@ -1704,7 +1706,7 @@ static const char *get_tech_name_and_multiplier(enum gs_color_space current_spac
 * 
 * param - our OBS filter structure
 */
-static void draw_superresolution(struct nv_superresolution_data *filter)
+static bool draw_superresolution(struct nv_superresolution_data *filter)
 {
 	/* Render alpha mask */
 	const enum gs_color_space source_space = filter->space;
@@ -1731,7 +1733,10 @@ static void draw_superresolution(struct nv_superresolution_data *filter)
 		obs_source_process_filter_tech_end(filter->context, filter->effect, filter->out_width, filter->out_height, technique);
 
 		gs_blend_state_pop();
+		return true;
 	}
+
+	return false;
 }
 
 
@@ -1869,11 +1874,11 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 	}
 
 	/* Ensure we've got our signal handlers setup if our source is valid */
-	if (parent && !filter->handler)
-	{
-		filter->handler = obs_source_get_signal_handler(parent);
-		signal_handler_connect(filter->handler, "update", nv_superres_filter_reset, filter);
-	}
+	//if (parent && !filter->handler)
+	//{
+	//	filter->handler = obs_source_get_signal_handler(parent);
+	//	signal_handler_connect(filter->handler, "update", nv_superres_filter_reset, filter);
+	//}
 
 	if (filter->destroy_ar)
 	{
@@ -1957,7 +1962,7 @@ static void nv_superres_filter_render(void *data, gs_effect_t *effect)
 	{
 		bool draw = true;
 
-		/* limit processing of the video frame */
+		/* limit processing of the video frames to the main source instance, and only when there's actually a new frame */
 		if (!async || filter->got_new_frame)
 		{
 			filter->got_new_frame = false;
@@ -2017,7 +2022,7 @@ static uint32_t nv_superres_filter_width(void *data)
 
 
 
-static uint32_t nv_superrer_filter_height(void *data)
+static uint32_t nv_superres_filter_height(void *data)
 {
 	struct nv_superresolution_data *const filter = (struct nv_superresolution_data *)data;
 
@@ -2034,8 +2039,17 @@ static const char *nv_superres_filter_name(void *unused)
 
 
 
-struct obs_source_info nvidia_superresolution_filter_info =
+static void nv_superres_filter_activate(void *data)
 {
+	struct nv_superresolution_data *const filter = (struct nv_superresolution_data *)data;
+
+	filter->processed_frame = false;
+	filter->got_new_frame = true;
+}
+
+
+
+struct obs_source_info nvidia_superresolution_filter_info = {
 	.id = "nv_superresolution_filter",
 	.type = OBS_SOURCE_TYPE_FILTER,
 	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB,
@@ -2050,7 +2064,9 @@ struct obs_source_info nvidia_superresolution_filter_info =
 	.video_tick = nv_superres_filter_tick,
 	.video_get_color_space = nv_superres_filter_get_color_space,
 	.get_width = nv_superres_filter_width,
-	.get_height = nv_superrer_filter_height,
+	.get_height = nv_superres_filter_height,
+	.activate = nv_superres_filter_activate,
+	.show = nv_superres_filter_activate,
 };
 
 

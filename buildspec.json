@@ -39,19 +39,12 @@
           "hash": "6afdd25386295974dad8f078b8f1e41cabebd08e72d970bf92f707c7e48b16c9"
       }
   },
-  "platformConfig": {
-      "macos": {
-          "bundleId": "com.example.obs-plugintemplate"
-      }
-  },
-    "name": "obs-rtx_superresolution",
+    "name": "rtx-superresolution",
     "version": "0.9.0",
     "author": "Ben Jolley",
     "website": "https://github.com/TheJollyBeardo/OBS_RTX_SuperResolution",
     "email": "",
     "uuids": {
-        "macosPackage": "7cfe750b-acff-494e-815c-642707f34581",
-        "macosInstaller": "b8831399-968a-4a38-98db-1eaddff16d98",
         "windowsApp": "1a53a3d5-f8ef-4757-ae54-d3f9bc2a1168"
     }
 }

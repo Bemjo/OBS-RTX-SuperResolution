@@ -4,39 +4,28 @@ An Open Broadcaster Software (OBS) plugin to enable nVidia RTX Video Super Resol
 
 https://blogs.nvidia.com/blog/2023/02/28/rtx-video-super-resolution/
 
-Prequisites:
-* OBS version 29.1.2 or higher
-* An nVidia RTX GPU (2060 or better)
-* Windows. Linux and MacOS are not supported currently.
+### Prequisites:
+* OBS version 29.1.2 or higher  
+* An nVidia RTX GPU (2060 or better)  
+* Windows. Linux and MacOS are not supported currently.  
 * The nVidia Video Effects SDK for your GPU, this can be obtained here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/
 
-Installation:
+### Installation:
 * Copy the files over your obs-studio installation folder
 
-Features:
-  nVidia Artifact Reduction Filter pre-pass: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#artifact-red-filter
+### Features:
+  nVidia Artifact Reduction Filter pre-pass: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#artifact-red-filter  
+  nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter  
+  nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter  
 
-  nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter
-
-  nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter
-
-Todo:
-  Removal of an OBS rendering pass
-  Better notifications and warnings for the user regarding errors with source resolutions and scaling.
-
-
+### Todo:
+  * Removal of an OBS rendering pass  
+  * Better notifications and warnings for the user regarding errors with source resolutions and scaling.  
 
 ## Build System Configuration
 
 To create a build configuration, `cmake` needs to be installed on the system. The plugin template supports CMake presets using the `CMakePresets.json` file and ships with default presets:
 
-* `macos`
-    * Universal architecture (supports Intel-based CPUs as Apple Silicon)
-    * Defaults to Qt version `6`
-    * Defaults to macOS deployment target `11.0`
-* `macos-ci`
-    * Inherits from `macos`
-    * Enables compile warnings as error
 * `windows-x64`
     * Windows 64-bit architecture
     * Defaults to Qt version `6`
@@ -70,5 +59,3 @@ Additional build system options are available to developers:
 * `ENABLE_CCACHE`: Enables support for compilation speed-ups via ccache (enabled by default on macOS and Linux)
 * `ENABLE_FRONTEND_API`: Adds OBS Frontend API support for interactions with OBS Studio frontend functionality (disabled by default)
 * `ENABLE_QT`: Adds Qt6 support for custom user interface elements (disabled by default)
-* `CODESIGN_IDENTITY`: Name of the Apple Developer certificate that should be used for code signing
-* `CODESIGN_TEAM`: Apple Developer team ID that should be used for code signing
