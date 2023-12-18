@@ -33,7 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define error(format, ...) do_log(LOG_ERROR, format, ##__VA_ARGS__)
 
 #if defined(_DEBUG) || defined(DEBUG)
-#define debug(format, ...) do_log(LOG_INFO, format, ##__VA_ARGS__)
+#define debug(format, ...) do_log(LOG_DEBUG, format, ##__VA_ARGS__)
 #else
 #define debug(format, ...)
 #endif
@@ -43,16 +43,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 /* -------------------------------------------------------- */
 
 
+
 #define S_TYPE "type"
 #define S_TYPE_NONE 0
 #define S_TYPE_SR 1
 #define S_TYPE_UP 2
+#define S_TYPE_DEFAULT S_TYPE_NONE
 
 #define S_ENABLE_AR "ar"
 #define S_MODE_AR "ar_mode"
 #define S_MODE_SR "sr_mode"
 #define S_MODE_WEAK 0
 #define S_MODE_STRONG 1
+#define S_MODE_DEFAULT S_MODE_STRONG
 
 #define S_SCALE "scale"
 #define S_SCALE_NONE 0
@@ -62,15 +65,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define S_SCALE_3x 4
 #define S_SCALE_4x 5
 #define S_SCALE_N 6
+#define S_SCALE_DEFAULT S_SCALE_15x
 
 #define S_STRENGTH "strength"
 #define S_STRENGTH_DEFAULT 0.4f
 
-#define S_LIMITFPS "limitfps"
-
 #define S_INVALID_WARNING "warning"
 #define S_INVALID_WARNING_AR "warning_ar"
 #define S_INVALID_WARNING_SR "warning_sr"
+#define S_PROPS_VERIFY "verify"
 
 #define MT_ obs_module_text
 #define TEXT_OBS_FILTER_NAME MT_("NVIDIASuperResolutionFilter")
@@ -78,14 +81,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_FILTER_NONE MT_("SuperResolution.Filter.None")
 #define TEXT_FILTER_SR MT_("SuperResolution.Filter.SuperRes")
 #define TEXT_FILTER_UP MT_("SuperResolution.Filter.Upscaling")
+#define TEXT_FILTER_DESC MT_("SuperResolution.Filter.Desc")
 #define TEXT_SR_MODE MT_("SuperResolution.SRMode")
 #define TEXT_SR_MODE_WEAK MT_("SuperResolution.SRMode.Weak")
 #define TEXT_SR_MODE_STRONG MT_("SuperResolution.SRMode.Strong")
+#define TEXT_UPSCALE_MODE_DESC MT_("SuperResoltuion.SRMode.Desc")
 #define TEXT_AR MT_("SuperResolution.AR")
 #define TEXT_AR_DESC MT_("SuperResolution.ARDesc")
 #define TEXT_AR_MODE MT_("SuperResolution.ARMode")
 #define TEXT_AR_MODE_WEAK MT_("SuperResolution.ARMode.Weak")
 #define TEXT_AR_MODE_STRONG MT_("SuperResolution.ARMode.Strong")
+#define TEXT_AR_MODE_DESC MT_("SuperResolution.ARMode.Desc")
 #define TEXT_UP_STRENGTH MT_("SuperResolution.Strength")
 #define TEXT_SCALE MT_("SuperResolution.Scale")
 #define TEXT_SCALE_SIZE_133x MT_("SuperResolution.Scale.133")
@@ -96,23 +102,20 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_INVALID_WARNING MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
-
+#define TEXT_BUTTON_VERIFY MT_("SuperResolution.Verify")
 
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
 /* Usable everywhere except load_nv_superresolution_filter */
 static bool nvvfx_loaded = false;
-static bool destroying_filter = false;
 static bool nvvfx_supports_ar = false;
 static bool nvvfx_supports_sr = false;
 static bool nvvfx_supports_up = false;
-static obs_property_t *g_invalid_warning = NULL;
-static obs_property_t *g_invalid_warning_ar = NULL;
-static obs_property_t *g_invalid_warning_sr = NULL;
 
-// while the filter allows for non 16:9 aspect ratios, these 16:9 values are used to validate input source sizes
-// so even though a 4:3 source may be provided that has the same pixel count as a 16:9 source -
-// if the resolution is outside these bounds it will be deemed invalid for processing
-// see https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter
+/* while the filter allows for non 16:9 aspect ratios, these 16:9 values are used to validate input source sizes
+* so even though a 4:3 source may be provided that has the same pixel count as a 16:9 source -
+* if the resolution is outside these bounds it will be deemed invalid for processing
+* see https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter
+*/
 static const uint32_t nv_type_resolutions[S_SCALE_N][2][2] =
 {
 	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE
@@ -174,19 +177,17 @@ struct nv_superresolution_data
 	/* A staging buffer that is the maximal size for the selected filters to avoid allocations during transfers */
 	NvCVImage *gpu_staging_img; // RGBAu8 Chunky if Upscaling only, BGRf32 otherwise
 
-	/* Intermediate buffer between final destination image, and dst_img.
-	* This shouldn't be needed, but for some reason I get a pixelformat error trying to transfer between the
-	* filter output, and the final dst_img which should only happen when trying to transfer between incompatible formats
-	* but the transfers are only GPU BGRf32 planar OR GPU RGBAu8 chunky -> GPU RGBAu8 chunky, which is fully supported
+	/* Intermediate buffer between final destination image, and dst_img. Should be removed if nvidia ever fixes this issue.
+	* Not used with Upscaling filter as this is only needed with BGRf32 -> D3D RGBAu8 transfers
 	* See Table 4, Pixel Conversions https://docs.nvidia.com/deeplearning/maxine/nvcvimage-api-guide/index.html#nvcvimage-transfer__section_wgp_qtd_xpb
-	* See this for a very basic and non-informational official response from 2021
+	* See this for a very basic and non-informational official response from 2021 as to why this is needed
 	* https://forums.developer.nvidia.com/t/no-transfer-conversion-from-planar-ncv-bgr-nvcv-f32-to-dx11-textures/183964/2
 	*/
 	NvCVImage *gpu_dst_tmp_img; // RGBAu8 chunky Format
 
 	/* upscaling effect vars */
 	gs_effect_t *effect;
-	gs_texrender_t *render;		  // TODO: remove this, and just render directly to the render_unorm
+	gs_texrender_t *render;
 	gs_texrender_t *render_unorm; // the converted RGBA U8 render of our source
 	gs_texture_t *scaled_texture; // the final RGBA U8 processed texture of the filter
 	uint32_t width;         // width of source
@@ -195,8 +196,10 @@ struct nv_superresolution_data
 	uint32_t out_height;	// output height determined by filter
 	enum gs_color_space space;
 	gs_eparam_t *image_param;
-	gs_eparam_t *upscaled_param;	// TODO: Remove this, and just use the default OBS rendering effect
-	gs_eparam_t *multiplier_param;	// TODO: remove this, and just use the default OBS rendering effect
+	gs_eparam_t *upscaled_param;
+	gs_eparam_t *multiplier_param;
+
+	obs_properties_t *properties;
 };
 
 
@@ -217,9 +220,7 @@ typedef struct img_create_params
 static void nv_sdk_path(TCHAR *buffer, size_t len)
 {
 	/* Currently hardcoded to find windows install directory, as that is the only supported OS supported by NvVFX */
-#ifndef _WIN32
-#error Platform not supported, at this time the nVidia Maxine VFX SDK only supports Windows
-#endif
+#ifdef _WIN32
 	TCHAR path[MAX_PATH];
 
 	// There can be multiple apps on the system,
@@ -234,6 +235,9 @@ static void nv_sdk_path(TCHAR *buffer, size_t len)
 		GetEnvironmentVariable(TEXT("ProgramFiles"), path, MAX_PATH);
 		_stprintf_s(buffer, len, TEXT("%s\\NVIDIA Corporation\\NVIDIA Video Effects\\"), path);
 	}
+#else
+#error Platform not supported, at this time the nVidia Maxine VFX SDK only supports Windows
+#endif
 }
 
 
@@ -438,8 +442,14 @@ static void nv_superres_filter_destroy(void *data)
 
 
 /* Macro shenanigans to deal with variadic arguments to the error */
-
-#define kill_error(msg, filter, ...){obs_log(LOG_ERROR, msg, ##__VA_ARGS__);os_atomic_set_bool(&filter->processing_stopped, true);}
+#define kill_on_error(cnd, msg, filter, ...) {	\
+	if (!cnd) \
+	{\
+		obs_log(LOG_ERROR, msg, ##__VA_ARGS__);	\
+		os_atomic_set_bool(&filter->processing_stopped, true); \
+		return false;	\
+	}\
+}
 
 /* Check the value of vfxErr, if it's anything other than NVCV_SUCCESS this macro will
 * log the error, set the processing_stopped flag on filter, and return false from whatever function it's in
@@ -517,6 +527,10 @@ static bool create_nvfx(struct nv_superresolution_data *filter, NvVFX_Handle *ha
 
 
 
+/* Loads the AR NVFX filter effect. Ensures any necessary parameters have been set.
+* 
+* returns: False if there is any error, true otherwise
+*/
 static bool load_ar_fx(struct nv_superresolution_data *filter)
 {
 	debug("load_ar_fx: entering");
@@ -532,30 +546,25 @@ static bool load_ar_fx(struct nv_superresolution_data *filter)
 
 	vfxErr = NvVFX_Load(filter->ar_handle);
 
-	if (NVCV_SUCCESS != vfxErr)
+	bool success = NVCV_SUCCESS == vfxErr;
+	if (!success && NVCV_ERR_RESOLUTION != vfxErr)
 	{
-		if (NVCV_ERR_RESOLUTION != vfxErr)
-		{
-			const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
-			error("Failed to load NvVFX AR effect %i: %s", vfxErr, errString);
-			os_atomic_set_bool(&filter->processing_stopped, true);
-			return false;
-		}
-
-		obs_property_set_visible(g_invalid_warning_ar, true);
-		filter->reload_ar_fx = false;
-		return false;
+		const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
+		error("Failed to load NvVFX AR effect %i: %s", vfxErr, errString);
+		os_atomic_set_bool(&filter->processing_stopped, true);
 	}
 
-	obs_property_set_visible(g_invalid_warning_ar, false);
 	filter->reload_ar_fx = false;
 
 	debug("load_ar_fx: exiting");
-	return true;
+	return success;
 }
 
 
-
+/* Loads the SR NVFX filter effect. Ensures any necessary parameters have been set.
+* 
+* returns: False if there is any error, true otherwise
+*/
 static bool load_sr_fx(struct nv_superresolution_data *filter)
 {
 	debug("load_sr_fx: entering");
@@ -580,31 +589,25 @@ static bool load_sr_fx(struct nv_superresolution_data *filter)
 
 	vfxErr = NvVFX_Load(filter->sr_handle);
 
-	if (NVCV_SUCCESS != vfxErr)
+	bool success = NVCV_SUCCESS == vfxErr;
+	if (!success && NVCV_ERR_RESOLUTION != vfxErr)
 	{
-		if (NVCV_ERR_RESOLUTION != vfxErr)
-		{
-			const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
-			error("Failed to load NvVFX SR effect %i: %s", vfxErr, errString);
-			os_atomic_set_bool(&filter->processing_stopped, true);
-			return false;
-		}
-
-		obs_property_set_visible(g_invalid_warning_sr, true);
-		filter->reload_sr_fx = false;
-		return false;
+		const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
+		error("Failed to load NvVFX SR effect %i: %s", vfxErr, errString);
+		os_atomic_set_bool(&filter->processing_stopped, true);
 	}
 
-	obs_property_set_visible(g_invalid_warning_sr, false);
 	filter->reload_sr_fx = false;
 
 	debug("load_sr_fx: exiting");
-	return true;
+	return success;
 }
 
 
 
-/* Creates a new CUDA stream for the filter, desytroying the previous one if it exists */
+/* Creates a new CUDA stream for the filter, desytroying the previous one if it exists.
+* returns: False if there is an error, true otherwise
+*/
 static bool create_cuda(struct nv_superresolution_data *filter)
 {
 	debug("create_cuda: entering");
@@ -652,9 +655,8 @@ static bool initialize_fx(struct nv_superresolution_data *filter)
 
 
 
-/*
-* Applies user settings changes to the filter, setting update flags.
-* These changes are processed inside the render loop.
+/* Called when the user changes any property in our OBS property window
+* Applies user settings changes to the filter, setting any necessary update/creation flags to be properly handled later.
 */
 static void nv_superres_filter_update(void *data, obs_data_t *settings)
 {
@@ -740,15 +742,12 @@ static bool alloc_image_from_texture(struct nv_superresolution_data *filter, img
 		NvCVImage_Destroy(*(params->buffer));
 	}
 
-	debug("alloc_image_from_texture: creating new NvCVImage");
-
 	vfxErr = NvCVImage_Create(params->width, params->height,
 					params->pixel_fmt, params->comp_type,
 					params->layout, NVCV_GPU,
 					params->alignment, params->buffer);
 	nv_error(vfxErr, "Error creating source NvCVImage", filter, false);
 
-	debug("alloc_image_from_texture: initializing from d3d11 texture");
 	vfxErr = NvCVImage_InitFromD3D11Texture(*(params->buffer), d11texture);
 	nv_error(vfxErr, "Error allocating NvCVImage from ID3D11Texture", filter, false);
 
@@ -907,11 +906,7 @@ static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 	debug("alloc_obs_textures: creating render texture");
 	filter->render = gs_texrender_create(gs_get_format_from_space(filter->space), GS_ZS_NONE);
 
-	if (!filter->render)
-	{
-		kill_error("Failed to create render texrenderer", filter);
-		return false;
-	}
+	kill_on_error(filter->render, "Failed to create render texrenderer", filter);
 
 	if (filter->render_unorm)
 	{
@@ -922,11 +917,7 @@ static bool alloc_obs_textures(struct nv_superresolution_data* filter)
 	debug("alloc_obs_textures: creating render unorm texture");
 	filter->render_unorm = gs_texrender_create(GS_BGRA_UNORM, GS_ZS_NONE);
 
-	if (!filter->render_unorm)
-	{
-		kill_error("Failed to create render_unorm texrenderer", filter);
-		return false;
-	}
+	kill_on_error(filter->render_unorm, "Failed to create render_unorm texrenderer", filter);
 
 	filter->done_initial_render = false;
 
@@ -1001,17 +992,22 @@ static bool alloc_sr_dest_images(struct nv_superresolution_data* filter)
 		.height = filter->out_height
 	};
 
-	if (filter->type == S_TYPE_SR) {
+	if (filter->type == S_TYPE_SR)
+	{
 		img.pixel_fmt = NVCV_BGR;
 		img.comp_type = NVCV_F32;
 		img.layout = NVCV_PLANAR;
 		img.alignment = 1;
-	} else if (filter->type == S_TYPE_UP) {
+	}
+	else if (filter->type == S_TYPE_UP)
+	{
 		img.pixel_fmt = NVCV_RGBA;
 		img.comp_type = NVCV_U8;
 		img.layout = NVCV_CHUNKY;
 		img.alignment = 32;
-	} else {
+	}
+	else
+	{
 		error("Attempted to allocate destination image buffer for No Upscaler");
 	}
 
@@ -1116,11 +1112,7 @@ static bool alloc_destination_image(struct nv_superresolution_data* filter)
 
 	filter->scaled_texture = gs_texture_create(filter->out_width, filter->out_height, GS_RGBA_UNORM, 1, NULL, 0);
 
-	if (!filter->scaled_texture)
-	{
-		kill_error("Final output texture couldn't be created", filter);
-		return false;
-	}
+	kill_on_error(filter->scaled_texture, "Final output texture couldn't be created", filter);
 
 	img_create_params_t params = {
 		.buffer = &filter->dst_img,
@@ -1228,7 +1220,7 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 	*	B: src_img -> staging -> SR_src -> Run FX -> SR_dst -> staging -> dst_tmp_img -> staging -> dst_img
 	*	C: src_img -> staging -> AR_src -> Run FX -> AR_dst -> staging -> SR_src -> Run FX -> SR_dst -> staging -> dst_tmp_img -> staging -> dst_img
 	* 
-	* Ideally the staging -> dst_tmp_img -> staging -> dst_img should not have to take place and should just be staging -> dst_img
+	* The staging -> dst_tmp_img stage is skipped if the AR is not selected, and the upscaling method is standard upscaling
 	*/
 
 	NvCVImage *destination = filter->dst_img;
@@ -1331,7 +1323,7 @@ static bool process_texture_superres(struct nv_superresolution_data *filter)
 
 
 
-/* Checks the various flags inside of filter to see if anything needs to be created, allocated, or reloaded 
+/* Reload the NVFX filter effects, the filter ar_handle and sr_handle must be allocated
 * param filter - the filter structure to validate
 */
 static bool reload_fx(struct nv_superresolution_data* filter)
@@ -1368,8 +1360,8 @@ static void* nv_superres_filter_create(obs_data_t* settings, obs_source_t* conte
 	}
 
 	filter->context = context;
-	filter->sr_mode = S_MODE_WEAK;
-	filter->type = S_TYPE_NONE;
+	filter->sr_mode = S_MODE_DEFAULT;
+	filter->type = S_TYPE_DEFAULT;
 	filter->show_size_error = true;
 	filter->scale = S_SCALE_15x;
 	filter->strength = S_STRENGTH_DEFAULT;
@@ -1386,7 +1378,7 @@ static void* nv_superres_filter_create(obs_data_t* settings, obs_source_t* conte
 	if (filter->effect)
 	{
 		filter->image_param = gs_effect_get_param_by_name(filter->effect, "image");
-		filter->upscaled_param = gs_effect_get_param_by_name(filter->effect, "mask");
+		filter->upscaled_param = gs_effect_get_param_by_name(filter->effect, "image_upcsaled");
 		filter->multiplier_param = gs_effect_get_param_by_name(filter->effect, "multiplier");
 	}
 
@@ -1428,21 +1420,9 @@ static bool nv_filter_type_modified(obs_properties_t *ppts, obs_property_t *p, o
 	obs_property_t *p_mode = obs_properties_get(ppts, S_MODE_SR);
 	obs_property_t *p_scale = obs_properties_get(ppts, S_SCALE);
 
-	if (type == S_TYPE_NONE)
-	{
-		obs_property_set_visible(p_str, false);
-		obs_property_set_visible(p_mode, false);
-		obs_property_set_visible(p_scale, false);
-		return true;
-	}
-	else
-	{
-		obs_property_set_visible(p_scale, true);
-	}
-
-	bool is_upcaling = type == S_TYPE_UP;
-	obs_property_set_visible(p_str, is_upcaling);
-	obs_property_set_visible(p_mode, !is_upcaling);
+	obs_property_set_visible(p_scale, type != S_TYPE_NONE);
+	obs_property_set_visible(p_str, type == S_TYPE_UP);
+	obs_property_set_visible(p_mode, type == S_TYPE_SR);
 
 	return true;
 }
@@ -1459,23 +1439,44 @@ static bool ar_pass_toggled(obs_properties_t *ppts, obs_property_t *p,obs_data_t
 
 
 
+bool on_verify_clicked(obs_properties_t* ppts, obs_property_t* p, void* data)
+{
+	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)obs_properties_get_param(ppts);
+
+	if (filter)
+	{
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING), filter->type != S_TYPE_NONE && !filter->is_target_valid);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_SR), filter->type != S_TYPE_NONE && !filter->is_target_valid);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_AR), filter->apply_ar && !filter->is_target_valid);
+	}
+
+	return true;
+}
+
+
+
 static obs_properties_t *nv_superres_filter_properties(void *data)
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 
-	obs_properties_t *props = obs_properties_create();
+	filter->properties = obs_properties_create_param(filter, NULL);
 
-	obs_property_t *filter_type = obs_properties_add_list(props, S_TYPE, TEXT_FILTER, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-
+	obs_property_t *filter_type = obs_properties_add_list(filter->properties, S_TYPE, TEXT_FILTER, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_set_long_description(filter_type, TEXT_FILTER_DESC);
 	obs_property_list_add_int(filter_type, TEXT_FILTER_NONE, S_TYPE_NONE);
+
 	if (nvvfx_supports_sr)
+	{
 		obs_property_list_add_int(filter_type, TEXT_FILTER_SR, S_TYPE_SR);
+	}
 	if (nvvfx_supports_up)
+	{
 		obs_property_list_add_int(filter_type, TEXT_FILTER_UP, S_TYPE_UP);
+	}
 
 	obs_property_set_modified_callback(filter_type, nv_filter_type_modified);
 
-	obs_property_t *scale = obs_properties_add_list(props, S_SCALE,TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *scale = obs_properties_add_list(filter->properties, S_SCALE,TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 
 	// NOTE: This generally gives inaccurate results that will need to be manually fixed if possible when we validate the source input size of things
 	//obs_property_list_add_int(scale, TEXT_SCALE_SIZE_133x, S_SCALE_133x);
@@ -1486,67 +1487,68 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	if (nvvfx_supports_sr)
 	{
-		obs_property_t *sr_mode = obs_properties_add_list(props, S_MODE_SR, TEXT_SR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *sr_mode = obs_properties_add_list(filter->properties, S_MODE_SR, TEXT_SR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(sr_mode, TEXT_SR_MODE_WEAK, S_MODE_WEAK);
 		obs_property_list_add_int(sr_mode, TEXT_SR_MODE_STRONG, S_MODE_STRONG);
+		obs_property_set_long_description(sr_mode, TEXT_UPSCALE_MODE_DESC);
 	}
 
 	if (nvvfx_supports_up)
 	{
-		obs_property_t *strength = obs_properties_add_float_slider(props, S_STRENGTH, TEXT_UP_STRENGTH, 0.0, 1.0, 0.05);
+		obs_property_t *strength = obs_properties_add_float_slider(filter->properties, S_STRENGTH, TEXT_UP_STRENGTH, 0.0, 1.0, 0.05);
 	}
 
 	if (nvvfx_supports_ar)
 	{
-		obs_property_t *ar_pass = obs_properties_add_bool(props, S_ENABLE_AR, TEXT_AR_DESC);
+		obs_property_t *ar_pass = obs_properties_add_bool(filter->properties, S_ENABLE_AR, TEXT_AR);
+		obs_property_set_long_description(ar_pass, TEXT_AR_DESC);
 		obs_property_set_modified_callback(ar_pass, ar_pass_toggled);
 
-		obs_property_t *ar_modes = obs_properties_add_list(props, S_MODE_AR, TEXT_AR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *ar_modes = obs_properties_add_list(filter->properties, S_MODE_AR, TEXT_AR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_set_long_description(ar_modes, TEXT_AR_MODE_DESC);
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_WEAK, S_MODE_WEAK);
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_STRONG, S_MODE_STRONG);
 	}
 
-	g_invalid_warning = obs_properties_add_text(props, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning, false);
-	obs_property_text_set_info_type(g_invalid_warning, OBS_TEXT_INFO_WARNING);
+	obs_properties_add_button(filter->properties, S_PROPS_VERIFY, TEXT_BUTTON_VERIFY, on_verify_clicked);
 
-	g_invalid_warning_ar = obs_properties_add_text(props, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning_ar, false);
-	obs_property_text_set_info_type(g_invalid_warning_ar, OBS_TEXT_INFO_WARNING);
+	obs_property_t *prop_invalid_warning = obs_properties_add_text(filter->properties, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
+	obs_property_set_visible(prop_invalid_warning, !filter->is_target_valid);
+	obs_property_text_set_info_type(prop_invalid_warning, OBS_TEXT_INFO_WARNING);
 
-	g_invalid_warning_sr = obs_properties_add_text(props, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
-	obs_property_set_visible(g_invalid_warning_sr, false);
-	obs_property_text_set_info_type(g_invalid_warning_sr, OBS_TEXT_INFO_WARNING);
+	obs_property_t *prop_invalid_warning_sr = obs_properties_add_text(filter->properties, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
+	obs_property_set_visible(prop_invalid_warning_sr, filter->type != S_TYPE_NONE && !filter->is_target_valid);
+	obs_property_text_set_info_type(prop_invalid_warning_sr, OBS_TEXT_INFO_WARNING);
 
-	return props;
+	obs_property_t *prop_invalid_warning_ar = obs_properties_add_text(filter->properties, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
+	obs_property_set_visible(prop_invalid_warning_ar, filter->apply_ar && !filter->is_target_valid);
+	obs_property_text_set_info_type(prop_invalid_warning_ar, OBS_TEXT_INFO_WARNING);
+
+	return filter->properties;
 }
 
 
 
 static void nv_superres_filter_defaults(obs_data_t *settings)
 {
-	int type = nvvfx_supports_sr ? S_TYPE_SR : (nvvfx_supports_up ? S_TYPE_UP : S_TYPE_NONE);
-
-	obs_data_set_default_int(settings, S_TYPE, type);
-	obs_data_set_default_int(settings, S_SCALE, S_SCALE_15x);
+	obs_data_set_default_int(settings, S_TYPE, S_TYPE_DEFAULT);
+	obs_data_set_default_int(settings, S_SCALE, S_SCALE_DEFAULT);
 
 	if (nvvfx_supports_ar)
 	{
 		obs_data_set_default_bool(settings, S_ENABLE_AR, false);
-		obs_data_set_default_int(settings, S_MODE_AR, S_MODE_WEAK);
+		obs_data_set_default_int(settings, S_MODE_AR, S_MODE_DEFAULT);
 	}
 
 	if (nvvfx_supports_sr)
 	{
-		obs_data_set_default_int(settings, S_MODE_SR, S_MODE_WEAK);
+		obs_data_set_default_int(settings, S_MODE_SR, S_MODE_DEFAULT);
 	}
 
 	if (nvvfx_supports_up)
 	{
 		obs_data_set_default_double(settings, S_STRENGTH, S_STRENGTH_DEFAULT);
 	}
-
-	obs_data_set_default_bool(settings, S_LIMITFPS, false);
 }
 
 
@@ -1616,17 +1618,14 @@ static void nv_superres_filter_tick(void *data, float t)
 		{
 			error("Input source is too small or too large for the requested scaling. Please try adding a Scale/Aspect ratio filter before this, or changing the input resolution of the source this filter is attached to!");
 			filter->show_size_error = false;
-			obs_property_set_visible(g_invalid_warning, true);
 		}
 		return;
 	}
 	else if (!filter->show_size_error)
 	{
-		obs_property_set_visible(g_invalid_warning, false);
 		filter->show_size_error = true;
 	}
 
-	/* As the source size has changed, we need to flag ALL the image buffers to be reloaded */
 	if (cx != filter->width || cy != filter->height || cx_out != filter->out_width || cy_out != filter->out_height)
 	{
 		debug("nv_superres_filter_tick: source size changed, or scale changed");
@@ -1708,7 +1707,6 @@ static const char *get_tech_name_and_multiplier(enum gs_color_space current_spac
 */
 static bool draw_superresolution(struct nv_superresolution_data *filter)
 {
-	/* Render alpha mask */
 	const enum gs_color_space source_space = filter->space;
 	float multiplier;
 	const char *technique = get_tech_name_and_multiplier(gs_get_color_space(), source_space, &multiplier);
@@ -2091,7 +2089,6 @@ bool load_nv_superresolution_filter(void)
 	}
 	else
 	{
-		/* We cannot load the SDK DLLs */
 		if (err == NVCV_ERR_LIBRARY)
 		{
 			info("[NVIDIA VIDEO FX SUPERRES]: Could not load NVVFX Library, please download the video effects SDK for your GPU https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/");

@@ -2,7 +2,7 @@
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
-uniform texture2d mask;
+uniform texture2d image_upcsaled;
 uniform float multiplier;
 
 sampler_state texSampler {
@@ -50,38 +50,37 @@ FragPos VSConvertUnorm(uint id : VERTEXID)
 	return vert_out;
 }
 
-float4 Mask(FragData f_in)
+float4 Image(FragData f_in)
 {
-	float4 rgba = mask.Sample(texSampler, f_in.uv);
+	float4 rgba = image_upcsaled.Sample(texSampler, f_in.uv);
 	return rgba;
 }
 
-float4 PSMask(FragData f_in) : TARGET
+float4 PSImage(FragData f_in) : TARGET
 {
-	float4 rgba = float4(srgb_nonlinear_to_linear(Mask(f_in).rgb), 1.0);
-	//float4 rgba = float4(Mask(f_in).rgb, 1.0);
+	float4 rgba = float4(srgb_nonlinear_to_linear(Image(f_in).rgb), 1.0);
 	return rgba;
 }
 
-float4 PSMaskMultiply(FragData f_in) : TARGET
+float4 PSImageMultiply(FragData f_in) : TARGET
 {
-	float4 rgba = Mask(f_in);
+	float4 rgba = Image(f_in);
 	rgba.rgb *= multiplier;
 	return rgba;
 }
 
-float4 PSMaskTonemap(FragData f_in) : TARGET
+float4 PSImageTonemap(FragData f_in) : TARGET
 {
-	float4 rgba = Mask(f_in);
+	float4 rgba = Image(f_in);
 	rgba.rgb = rec709_to_rec2020(rgba.rgb);
 	rgba.rgb = reinhard(rgba.rgb);
 	rgba.rgb = rec2020_to_rec709(rgba.rgb);
 	return rgba;
 }
 
-float4 PSMaskMultiplyTonemap(FragData f_in) : TARGET
+float4 PSImageMultiplyTonemap(FragData f_in) : TARGET
 {
-	float4 rgba = Mask(f_in);
+	float4 rgba = Image(f_in);
 	rgba.rgb *= multiplier;
 	rgba.rgb = rec709_to_rec2020(rgba.rgb);
 	rgba.rgb = reinhard(rgba.rgb);
@@ -122,7 +121,7 @@ technique Draw
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
-		pixel_shader  = PSMask(f_in);
+		pixel_shader  = PSImage(f_in);
 	}
 }
 
@@ -131,7 +130,7 @@ technique DrawMultiply
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
-		pixel_shader  = PSMaskMultiply(f_in);
+		pixel_shader  = PSImageMultiply(f_in);
 	}
 }
 
@@ -140,7 +139,7 @@ technique DrawTonemap
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
-		pixel_shader  = PSMaskTonemap(f_in);
+		pixel_shader  = PSImageTonemap(f_in);
 	}
 }
 
@@ -149,7 +148,7 @@ technique DrawMultiplyTonemap
 	pass
 	{
 		vertex_shader = VSDefault(v_in);
-		pixel_shader  = PSMaskMultiplyTonemap(f_in);
+		pixel_shader  = PSImageMultiplyTonemap(f_in);
 	}
 }
 
