@@ -18,10 +18,6 @@ https://blogs.nvidia.com/blog/2023/02/28/rtx-video-super-resolution/
   nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter  
   nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter  
 
-### Todo:
-  * Removal of an OBS rendering pass  
-  * Better notifications and warnings for the user regarding errors with source resolutions and scaling.  
-
 ## Build System Configuration
 
 To create a build configuration, `cmake` needs to be installed on the system. The plugin template supports CMake presets using the `CMakePresets.json` file and ships with default presets:
