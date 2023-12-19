@@ -65,12 +65,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define S_SCALE_3x 4
 #define S_SCALE_4x 5
 #define S_SCALE_N 6
+#define S_SCALE_AR 0
 #define S_SCALE_DEFAULT S_SCALE_15x
 
 #define S_STRENGTH "strength"
 #define S_STRENGTH_DEFAULT 0.4f
 
-#define S_INVALID_WARNING "warning"
+#define S_VALID_TARGET "target_valid"
+#define S_INVALID_ERROR "error_invalid"
 #define S_INVALID_WARNING_AR "warning_ar"
 #define S_INVALID_WARNING_SR "warning_sr"
 #define S_PROPS_VERIFY "verify"
@@ -99,7 +101,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_SCALE_SIZE_2x MT_("SuperResolution.Scale.2")
 #define TEXT_SCALE_SIZE_3x MT_("SuperResolution.Scale.3")
 #define TEXT_SCALE_SIZE_4x MT_("SuperResolution.Scale.4")
-#define TEXT_INVALID_WARNING MT_("SuperResolution.Invalid")
+#define TEXT_VALID_TARGET MT_("SuperResolution.Valid")
+#define TEXT_INVALID_ERROR MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
 #define TEXT_BUTTON_VERIFY MT_("SuperResolution.Verify")
@@ -118,7 +121,7 @@ static bool nvvfx_supports_up = false;
 */
 static const uint32_t nv_type_resolutions[S_SCALE_N][2][2] =
 {
-	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE
+	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE, index is S_SCALE_NONE but also doubles as Artifact Reduction minimum scale index
 	{{160, 90}, {3840, 2160}}, // S_SCALE_133x
 	{{160, 90}, {3840, 2160}}, // S_SCALE_15x
 	{{160, 90}, {1920, 1080}}, // S_SCALE_2x
@@ -137,6 +140,8 @@ struct nv_superresolution_data
 	bool processed_frame;
 	bool done_initial_render;
 	bool is_target_valid;
+	bool invalid_ar_size;
+	bool invalid_sr_size;
 	bool show_size_error;
 	bool got_new_frame;
 	signal_handler_t *handler;
@@ -547,13 +552,17 @@ static bool load_ar_fx(struct nv_superresolution_data *filter)
 	vfxErr = NvVFX_Load(filter->ar_handle);
 
 	bool success = NVCV_SUCCESS == vfxErr;
-	if (!success && NVCV_ERR_RESOLUTION != vfxErr)
-	{
-		const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
-		error("Failed to load NvVFX AR effect %i: %s", vfxErr, errString);
-		os_atomic_set_bool(&filter->processing_stopped, true);
-	}
 
+	if (!success)
+	{
+		if (NVCV_ERR_RESOLUTION != vfxErr)
+		{
+			const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
+			error("Failed to load NvVFX AR effect %i: %s", vfxErr, errString);
+			os_atomic_set_bool(&filter->processing_stopped, true);
+		}
+	}
+	filter->invalid_ar_size = !success;
 	filter->reload_ar_fx = false;
 
 	debug("load_ar_fx: exiting");
@@ -590,12 +599,18 @@ static bool load_sr_fx(struct nv_superresolution_data *filter)
 	vfxErr = NvVFX_Load(filter->sr_handle);
 
 	bool success = NVCV_SUCCESS == vfxErr;
-	if (!success && NVCV_ERR_RESOLUTION != vfxErr)
+
+	if (!success)
 	{
-		const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
-		error("Failed to load NvVFX SR effect %i: %s", vfxErr, errString);
-		os_atomic_set_bool(&filter->processing_stopped, true);
+		if (NVCV_ERR_RESOLUTION != vfxErr)
+		{
+			const char *errString = NvCV_GetErrorStringFromCode(vfxErr);
+			error("Failed to load NvVFX SR effect %i: %s", vfxErr, errString);
+			os_atomic_set_bool(&filter->processing_stopped, true);
+		}
 	}
+
+	filter->invalid_sr_size = !success;
 
 	filter->reload_sr_fx = false;
 
@@ -1439,15 +1454,26 @@ static bool ar_pass_toggled(obs_properties_t *ppts, obs_property_t *p,obs_data_t
 
 
 
+void update_validation_messages(obs_properties_t* ppts, struct nv_superresolution_data* filter)
+{
+		bool activateSRWarning = filter->type != S_TYPE_NONE && filter->invalid_sr_size;
+		bool activateARWarning =  filter->apply_ar && filter->invalid_ar_size;
+
+		obs_property_set_visible(obs_properties_get(ppts, S_VALID_TARGET), !activateSRWarning && !activateARWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_ERROR), activateSRWarning || activateARWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_SR), activateSRWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_AR), activateARWarning);
+}
+
+
+
 bool on_verify_clicked(obs_properties_t* ppts, obs_property_t* p, void* data)
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)obs_properties_get_param(ppts);
 
 	if (filter)
 	{
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING), filter->type != S_TYPE_NONE && !filter->is_target_valid);
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_SR), filter->type != S_TYPE_NONE && !filter->is_target_valid);
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_AR), filter->apply_ar && !filter->is_target_valid);
+		update_validation_messages(ppts, filter);
 	}
 
 	return true;
@@ -1512,17 +1538,18 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	obs_properties_add_button(filter->properties, S_PROPS_VERIFY, TEXT_BUTTON_VERIFY, on_verify_clicked);
 
-	obs_property_t *prop_invalid_warning = obs_properties_add_text(filter->properties, S_INVALID_WARNING, TEXT_INVALID_WARNING, OBS_TEXT_INFO);
-	obs_property_set_visible(prop_invalid_warning, !filter->is_target_valid);
-	obs_property_text_set_info_type(prop_invalid_warning, OBS_TEXT_INFO_WARNING);
+	obs_property_t *prop_source_valid_sr = obs_properties_add_text(filter->properties, S_VALID_TARGET, TEXT_VALID_TARGET, OBS_TEXT_INFO);
+
+	obs_property_t *prop_invalid_error = obs_properties_add_text(filter->properties, S_INVALID_ERROR, TEXT_INVALID_ERROR, OBS_TEXT_INFO);
+	obs_property_text_set_info_type(prop_invalid_error, OBS_TEXT_INFO_ERROR);
 
 	obs_property_t *prop_invalid_warning_sr = obs_properties_add_text(filter->properties, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
-	obs_property_set_visible(prop_invalid_warning_sr, filter->type != S_TYPE_NONE && !filter->is_target_valid);
 	obs_property_text_set_info_type(prop_invalid_warning_sr, OBS_TEXT_INFO_WARNING);
 
 	obs_property_t *prop_invalid_warning_ar = obs_properties_add_text(filter->properties, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
-	obs_property_set_visible(prop_invalid_warning_ar, filter->apply_ar && !filter->is_target_valid);
 	obs_property_text_set_info_type(prop_invalid_warning_ar, OBS_TEXT_INFO_WARNING);
+
+	update_validation_messages(filter->properties, filter);
 
 	return filter->properties;
 }
@@ -1606,11 +1633,23 @@ static void nv_superres_filter_tick(void *data, float t)
 
 	uint32_t cx_out;
 	uint32_t cy_out;
-	int _scale = (filter->type == S_TYPE_NONE) ? S_SCALE_NONE : filter->scale;
 
-	// Validate our input source size against the scaling method
-	get_scale_factor(_scale, cx, cy, &cx_out, &cy_out);
-	filter->is_target_valid = validate_source_size(_scale, cx, cy, cx_out, cy_out);
+	if (filter->apply_ar)
+	{
+		get_scale_factor(S_SCALE_AR, cx, cy, &cx_out, &cy_out);
+		filter->is_target_valid =	validate_source_size(S_SCALE_AR, cx, cy, cx_out, cy_out);
+		filter->invalid_ar_size = !filter->is_target_valid;
+	}
+
+	if (filter->is_target_valid)
+	{
+		if (filter->type != S_TYPE_NONE)
+		{
+			get_scale_factor(filter->scale, cx, cy, &cx_out, &cy_out);
+			filter->is_target_valid = validate_source_size(filter->scale, cx, cy, cx_out, cy_out);
+			filter->invalid_sr_size = !filter->is_target_valid;
+		}
+	}
 
 	if (!filter->is_target_valid)
 	{
