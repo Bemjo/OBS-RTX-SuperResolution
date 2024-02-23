@@ -4,19 +4,56 @@ An Open Broadcaster Software (OBS) plugin to enable nVidia RTX Video Super Resol
 
 https://blogs.nvidia.com/blog/2023/02/28/rtx-video-super-resolution/
 
-### Prequisites:
-* OBS version 29.1.2 or higher  
-* An nVidia RTX GPU (2060 or better)  
-* Windows. Linux and MacOS are not supported currently.  
-* The nVidia Video Effects SDK for your GPU, this can be obtained here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/
-
-### Installation:
-* Copy the files over your obs-studio installation folder
-
-### Features:
+## Features:
   nVidia Artifact Reduction Filter pre-pass: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#artifact-red-filter  
   nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter  
   nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter  
+
+## Prequisites:
+* OBS version 29.1.2 or higher  
+* An nVidia RTX GPU (2060 or better)  
+* Windows. Linux and MacOS are not supported currently.  
+* The nVidia Video Effects SDK for your GPU, this can be obtained here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/  
+
+![nVidia Video Effects SDK](docs/nvidia.png)
+
+## Installation:
+* Copy the files over your obs-studio installation folder
+
+## Usage
+
+1. Add a filter to a source.  
+![Add Source Filter](docs/filter.png)  
+
+2. Add NVIDIA Super Resolution.  
+![Add SuperResolution Filter](docs/super_res.png)  
+
+3. Select Upscaling Type.  
+![Upscaling Type](docs/upscaler.png)  
+
+4. Choose a scale that is valid for your source resolution.  
+![Scale Multiplier](docs/scale.png)  
+
+5. Optional. Apply Artifact Reduction pre-pass and select AR Mode.  
+  * NOTE: Artifact Reduction has more limited resolution ranged available to it - your sources cannot be smaller than 160x90 or larger than 1920x1080 if you wish to use Artifact Reduction  
+![Artifact Reduction](docs/ar.png)  
+
+6. Click Verify Source Button.
+  * If you get a white message, your source is being upscaled. You can also verify this visually in OBS if your source resizes in the scene.  
+![Valid Source](docs/valid.png)  
+  * If you get other messages, your source is NOT being upscaled. You will need to select a different scaling option, or apply a Scale/Aspect Ratio filter BEFORE this NVIDIA SuperResolution filter to resize your source before this filter has a chance to process it.  
+![Invalid Source](docs/invalid.png)  
+
+###  From the nVidia video fx sdk itself, here are some general recommendations
+ ```
+    If a video without encoding artifacts needs a fast resolution increase, use Upscale.
+    If a video has no encoding artifacts, to increase the resolution, use SuperRes with mode 1 (strong) for greater enhancement.
+    If a video has fewer encoding artifacts, to remove artifacts, use ArtifactReduction only with mode 0.
+    If a video has more encoding artifacts, to remove artifacts, use ArtifactReduction only with mode 1.
+    To increase the resolution of a video with encoding artifacts:
+        For light artifacts, use SuperRes with mode 0 (weak).
+        Otherwise, use ArtifactReduction followed by SuperRes with mode 1.
+```
 
 ## Build System Configuration
 
