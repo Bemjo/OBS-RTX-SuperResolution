@@ -9,6 +9,9 @@ https://blogs.nvidia.com/blog/2023/02/28/rtx-video-super-resolution/
   nVidia Super Resolution Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter  
   nVidia Upscaling Filter: https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#upscale-filter  
 
+## Examples:
+See the [Examples Gallery](docs/examples/README.md)  
+
 ## Prequisites:
 * OBS version 29.1.2 or higher  
 * An nVidia RTX GPU (2060 or better)  
