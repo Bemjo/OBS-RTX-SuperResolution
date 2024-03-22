@@ -2054,7 +2054,7 @@ static uint32_t nv_superres_filter_width(void *data)
 {
 	struct nv_superresolution_data *const filter = (struct nv_superresolution_data *)data;
 
-	return (filter->is_target_valid && !filter->processing_stopped) ? filter->out_width : filter->target_width;
+	return (filter->type != S_TYPE_NONE && filter->is_target_valid && !filter->processing_stopped) ? filter->out_width : filter->target_width;
 }
 
 
@@ -2062,8 +2062,8 @@ static uint32_t nv_superres_filter_width(void *data)
 static uint32_t nv_superres_filter_height(void *data)
 {
 	struct nv_superresolution_data *const filter = (struct nv_superresolution_data *)data;
-
-	return (filter->is_target_valid && !filter->processing_stopped) ? filter->out_height : filter->target_height;
+	
+	return (filter->type != S_TYPE_NONE && filter->is_target_valid && !filter->processing_stopped) ? filter->out_height : filter->target_height;
 }
 
 
