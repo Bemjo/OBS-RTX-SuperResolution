@@ -73,6 +73,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define S_STRENGTH_DEFAULT 0.4f
 
 #define S_VALID_TARGET "target_valid"
+#define S_FATAL_ERROR "error_fatal"
 #define S_INVALID_ERROR "error_invalid"
 #define S_INVALID_WARNING_AR "warning_ar"
 #define S_INVALID_WARNING_SR "warning_sr"
@@ -97,6 +98,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_AR_MODE_DESC MT_("SuperResolution.ARMode.Desc")
 #define TEXT_UP_STRENGTH MT_("SuperResolution.Strength")
 #define TEXT_SCALE MT_("SuperResolution.Scale")
+#define TEXT_SCALE_DESC MT_("SuperResolution.Scale.Desc")
 #define TEXT_SRSCALE_SIZE_133x MT_("SuperResolution.SRScale.133")
 #define TEXT_SRSCALE_SIZE_15x MT_("SuperResolution.SRScale.15")
 #define TEXT_SRSCALE_SIZE_2x MT_("SuperResolution.SRScale.2")
@@ -108,10 +110,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_UPSCALE_SIZE_3x MT_("SuperResolution.Upscale.3")
 #define TEXT_UPSCALE_SIZE_4x MT_("SuperResolution.Upscale.4")
 #define TEXT_VALID_TARGET MT_("SuperResolution.Valid")
+#define TEXT_FATAL_ERROR MT_("SuperResolution.FatalError")
 #define TEXT_INVALID_ERROR MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
 #define TEXT_INVALID_WARNING_SR MT_("SuperResolution.InvalidSR")
 #define TEXT_BUTTON_VERIFY MT_("SuperResolution.Verify")
+
 
 /* Set at module load time, checks to see if the NvVFX SDK is loaded, and what the users GPU and drivers supports */
 /* Usable everywhere except load_nv_superresolution_filter */
@@ -159,7 +163,6 @@ struct nv_superresolution_data
 	bool are_images_allocated;
 	bool destroy_ar;
 	bool destroy_sr;
-	bool is_processing;
 	bool destroying;
 
 	/* RTX SDK vars */
@@ -209,8 +212,6 @@ struct nv_superresolution_data
 	gs_eparam_t *image_param;
 	gs_eparam_t *upscaled_param;
 	gs_eparam_t *multiplier_param;
-
-	obs_properties_t *properties;
 };
 
 
@@ -1474,11 +1475,13 @@ void update_validation_messages(obs_properties_t* ppts, struct nv_superresolutio
 {
 		bool activateSRWarning = filter->type != S_TYPE_NONE && filter->invalid_sr_size;
 		bool activateARWarning =  filter->apply_ar && filter->invalid_ar_size;
+		bool fatal = filter->processing_stopped;
 
-		obs_property_set_visible(obs_properties_get(ppts, S_VALID_TARGET), !activateSRWarning && !activateARWarning);
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_ERROR), activateSRWarning || activateARWarning);
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_SR), activateSRWarning);
-		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_AR), activateARWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_VALID_TARGET), !fatal && !activateSRWarning && !activateARWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_FATAL_ERROR), fatal);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_ERROR), !fatal && (activateSRWarning || activateARWarning));
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_SR), !fatal && activateSRWarning);
+		obs_property_set_visible(obs_properties_get(ppts, S_INVALID_WARNING_AR), !fatal && activateARWarning);
 }
 
 
@@ -1501,9 +1504,9 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 {
 	struct nv_superresolution_data *filter = (struct nv_superresolution_data *)data;
 
-	filter->properties = obs_properties_create_param(filter, NULL);
+	obs_properties_t *properties = obs_properties_create_param(filter, NULL);
 
-	obs_property_t *filter_type = obs_properties_add_list(filter->properties, S_TYPE, TEXT_FILTER, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *filter_type = obs_properties_add_list(properties, S_TYPE, TEXT_FILTER, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_set_long_description(filter_type, TEXT_FILTER_DESC);
 	obs_property_list_add_int(filter_type, TEXT_FILTER_NONE, S_TYPE_NONE);
 
@@ -1518,7 +1521,8 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	obs_property_set_modified_callback(filter_type, nv_filter_type_modified);
 
-	obs_property_t *sr_scale = obs_properties_add_list(filter->properties, S_SR_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *sr_scale = obs_properties_add_list(properties, S_SR_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_set_long_description(sr_scale, TEXT_SCALE_DESC);
 
 	// NOTE: This generally gives inaccurate results that will need to be manually fixed if possible when we validate the source input size of things
 	//obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_133x, S_SCALE_133x);
@@ -1527,7 +1531,9 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_3x, S_SCALE_3x);
 	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_4x, S_SCALE_4x);
 
-	obs_property_t *up_scale = obs_properties_add_list(filter->properties, S_UP_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *up_scale = obs_properties_add_list(properties, S_UP_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	// NOTE: This generally gives inaccurate results that will need to be manually fixed if possible when we validate the source input size of things
+	//obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_133x, S_SCALE_133x);
 	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_15x, S_SCALE_15x);
 	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_2x, S_SCALE_2x);
 	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_3x, S_SCALE_3x);
@@ -1535,7 +1541,7 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	if (nvvfx_supports_sr)
 	{
-		obs_property_t *sr_mode = obs_properties_add_list(filter->properties, S_MODE_SR, TEXT_SR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *sr_mode = obs_properties_add_list(properties, S_MODE_SR, TEXT_SR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_list_add_int(sr_mode, TEXT_SR_MODE_WEAK, S_MODE_WEAK);
 		obs_property_list_add_int(sr_mode, TEXT_SR_MODE_STRONG, S_MODE_STRONG);
 		obs_property_set_long_description(sr_mode, TEXT_UPSCALE_MODE_DESC);
@@ -1543,37 +1549,40 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	if (nvvfx_supports_up)
 	{
-		obs_property_t *strength = obs_properties_add_float_slider(filter->properties, S_STRENGTH, TEXT_UP_STRENGTH, 0.0, 1.0, 0.05);
+		obs_property_t *strength = obs_properties_add_float_slider(properties, S_STRENGTH, TEXT_UP_STRENGTH, 0.0, 1.0, 0.05);
 	}
 
 	if (nvvfx_supports_ar)
 	{
-		obs_property_t *ar_pass = obs_properties_add_bool(filter->properties, S_ENABLE_AR, TEXT_AR);
+		obs_property_t *ar_pass = obs_properties_add_bool(properties, S_ENABLE_AR, TEXT_AR);
 		obs_property_set_long_description(ar_pass, TEXT_AR_DESC);
 		obs_property_set_modified_callback(ar_pass, ar_pass_toggled);
 
-		obs_property_t *ar_modes = obs_properties_add_list(filter->properties, S_MODE_AR, TEXT_AR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_property_t *ar_modes = obs_properties_add_list(properties, S_MODE_AR, TEXT_AR_MODE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 		obs_property_set_long_description(ar_modes, TEXT_AR_MODE_DESC);
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_WEAK, S_MODE_WEAK);
 		obs_property_list_add_int(ar_modes, TEXT_AR_MODE_STRONG, S_MODE_STRONG);
 	}
 
-	obs_properties_add_button(filter->properties, S_PROPS_VERIFY, TEXT_BUTTON_VERIFY, on_verify_clicked);
+	obs_properties_add_button(properties, S_PROPS_VERIFY, TEXT_BUTTON_VERIFY, on_verify_clicked);
 
-	obs_property_t *prop_source_valid_sr = obs_properties_add_text(filter->properties, S_VALID_TARGET, TEXT_VALID_TARGET, OBS_TEXT_INFO);
+	obs_property_t *prop_source_valid_sr = obs_properties_add_text(properties, S_VALID_TARGET, TEXT_VALID_TARGET, OBS_TEXT_INFO);
 
-	obs_property_t *prop_invalid_error = obs_properties_add_text(filter->properties, S_INVALID_ERROR, TEXT_INVALID_ERROR, OBS_TEXT_INFO);
+	obs_property_t *prop_fatal_error = obs_properties_add_text(properties, S_FATAL_ERROR, TEXT_FATAL_ERROR, OBS_TEXT_INFO);
+	obs_property_text_set_info_type(prop_fatal_error, OBS_TEXT_INFO_ERROR);
+
+	obs_property_t *prop_invalid_error = obs_properties_add_text(properties, S_INVALID_ERROR, TEXT_INVALID_ERROR, OBS_TEXT_INFO);
 	obs_property_text_set_info_type(prop_invalid_error, OBS_TEXT_INFO_ERROR);
 
-	obs_property_t *prop_invalid_warning_sr = obs_properties_add_text(filter->properties, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
+	obs_property_t *prop_invalid_warning_sr = obs_properties_add_text(properties, S_INVALID_WARNING_SR, TEXT_INVALID_WARNING_SR, OBS_TEXT_INFO);
 	obs_property_text_set_info_type(prop_invalid_warning_sr, OBS_TEXT_INFO_WARNING);
 
-	obs_property_t *prop_invalid_warning_ar = obs_properties_add_text(filter->properties, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
+	obs_property_t *prop_invalid_warning_ar = obs_properties_add_text(properties, S_INVALID_WARNING_AR, TEXT_INVALID_WARNING_AR, OBS_TEXT_INFO);
 	obs_property_text_set_info_type(prop_invalid_warning_ar, OBS_TEXT_INFO_WARNING);
 
-	update_validation_messages(filter->properties, filter);
+	update_validation_messages(properties, filter);
 
-	return filter->properties;
+	return properties;
 }
 
 
