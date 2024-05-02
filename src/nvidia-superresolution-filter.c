@@ -57,7 +57,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define S_MODE_STRONG 1
 #define S_MODE_DEFAULT S_MODE_STRONG
 
-#define S_SCALE "scale"
+#define S_SR_SCALE "srscale"
+#define S_UP_SCALE "upscale"
 #define S_SCALE_NONE 0
 #define S_SCALE_133x 1
 #define S_SCALE_15x 2
@@ -96,11 +97,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define TEXT_AR_MODE_DESC MT_("SuperResolution.ARMode.Desc")
 #define TEXT_UP_STRENGTH MT_("SuperResolution.Strength")
 #define TEXT_SCALE MT_("SuperResolution.Scale")
-#define TEXT_SCALE_SIZE_133x MT_("SuperResolution.Scale.133")
-#define TEXT_SCALE_SIZE_15x MT_("SuperResolution.Scale.15")
-#define TEXT_SCALE_SIZE_2x MT_("SuperResolution.Scale.2")
-#define TEXT_SCALE_SIZE_3x MT_("SuperResolution.Scale.3")
-#define TEXT_SCALE_SIZE_4x MT_("SuperResolution.Scale.4")
+#define TEXT_SRSCALE_SIZE_133x MT_("SuperResolution.SRScale.133")
+#define TEXT_SRSCALE_SIZE_15x MT_("SuperResolution.SRScale.15")
+#define TEXT_SRSCALE_SIZE_2x MT_("SuperResolution.SRScale.2")
+#define TEXT_SRSCALE_SIZE_3x MT_("SuperResolution.SRScale.3")
+#define TEXT_SRSCALE_SIZE_4x MT_("SuperResolution.SRScale.4")
+#define TEXT_UPSCALE_SIZE_133x MT_("SuperResolution.Upscale.133")
+#define TEXT_UPSCALE_SIZE_15x MT_("SuperResolution.Upscale.15")
+#define TEXT_UPSCALE_SIZE_2x MT_("SuperResolution.Upscale.2")
+#define TEXT_UPSCALE_SIZE_3x MT_("SuperResolution.Upscale.3")
+#define TEXT_UPSCALE_SIZE_4x MT_("SuperResolution.Upscale.4")
 #define TEXT_VALID_TARGET MT_("SuperResolution.Valid")
 #define TEXT_INVALID_ERROR MT_("SuperResolution.Invalid")
 #define TEXT_INVALID_WARNING_AR MT_("SuperResolution.InvalidAR")
@@ -121,7 +127,7 @@ static bool nvvfx_supports_up = false;
 */
 static const uint32_t nv_type_resolutions[S_SCALE_N][2][2] =
 {
-	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE, index is S_SCALE_NONE but also doubles as Artifact Reduction minimum scale index
+	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE, index is S_SCALE_NONE but also doubles as Artifact Reduction minimum sr_scale index
 	{{160, 90}, {3840, 2160}}, // S_SCALE_133x
 	{{160, 90}, {3840, 2160}}, // S_SCALE_15x
 	{{160, 90}, {3840, 2160}}, // S_SCALE_2x
@@ -164,7 +170,7 @@ struct nv_superresolution_data
 	int ar_mode;		// filter mode, should be one of S_MODE_AR
 	int sr_mode;		// filter mode, should be one of S_MODE_SR
 	int type;			// filter type, should be one of S_TYPE_
-	int scale;			// scale mode, should be one of S_SCALE_
+	int scale;			// sr_scale mode, should be one of S_SCALE_
 	float strength;		// effect strength, only effects upscaling filter?
 
 	/* OBS render buffers for NvVFX */
@@ -263,8 +269,8 @@ static void get_nvfx_sdk_path(char *buffer, size_t len)
 
 
 /*
-* Scales the input dimensions by the given scale enum, giving the output
-* param scale - scale enum, should be one of S_SCALE_133x, S_SCALE_15x, S_SCALE_2x, S_SCALE_3x, S_SCALE_4x
+* Scales the input dimensions by the given sr_scale enum, giving the output
+* param sr_scale - sr_scale enum, should be one of S_SCALE_133x, S_SCALE_15x, S_SCALE_2x, S_SCALE_3x, S_SCALE_4x
 * param in_x - input width
 * param in_y - input height
 * param out_x - scaled width output
@@ -300,9 +306,17 @@ static inline void get_scale_factor(uint32_t s_scale, uint32_t in_x, uint32_t in
 
 
 
+
+static inline bool validate_scaling_aspect(uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2)
+{
+	return (x1 * y2) == (y1 * x2);
+}
+
+
+
 /*
-* Scales the input dimensions by the given scale enum, giving the output
-* param scale - scale enum, should be one of S_SCALE_133x, S_SCALE_15x, S_SCALE_2x, S_SCALE_3x, S_SCALE_4x
+* Scales the input dimensions by the given sr_scale enum, giving the output
+* param sr_scale - sr_scale enum, should be one of S_SCALE_133x, S_SCALE_15x, S_SCALE_2x, S_SCALE_3x, S_SCALE_4x
 * param in_x - input width
 * param in_y - input height
 * param out_x - scaled width output
@@ -316,12 +330,6 @@ static inline bool validate_source_size(uint32_t scale, uint32_t x1, uint32_t y1
 {
 	if (scale < 0 || scale >= S_SCALE_N)
 		return false;
-	
-	// validate input/output aspect ratios match through pixel count
-	if ((x1 * y2) != (y1 * x2))
-	{
-		return false;
-	}
 
 	uint32_t min_width = nv_type_resolutions[scale][0][0];
 	uint32_t max_width = nv_type_resolutions[scale][1][0];
@@ -680,7 +688,7 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 	int type = (int)obs_data_get_int(settings, S_TYPE);
 	int sr_mode = (int)obs_data_get_int(settings, S_MODE_SR);
 	bool apply_ar = obs_data_get_bool(settings, S_ENABLE_AR);
-	filter->scale = (int)obs_data_get_int(settings, S_SCALE);
+	filter->scale = (int)obs_data_get_int(settings, S_SR_SCALE);
 
 	if (filter->type != type)
 	{
@@ -688,6 +696,11 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 		filter->destroy_sr = true;
 		filter->reload_sr_fx = true;
 		debug("Update: Filter type changed");
+	}
+
+	if (filter->type == S_TYPE_SR)
+	{
+		filter->scale = (int)obs_data_get_int(settings, S_SR_SCALE);
 	}
 
 	if (filter->sr_mode != sr_mode)
@@ -727,6 +740,7 @@ static void nv_superres_filter_update(void *data, obs_data_t *settings)
 	if (type == S_TYPE_UP)
 	{
 		float strength = (float)obs_data_get_double(settings, S_STRENGTH);
+		filter->scale = (int)obs_data_get_int(settings, S_UP_SCALE);
 		if (fabsf(strength - filter->strength) > EPSILON)
 		{
 			filter->strength = strength;
@@ -991,7 +1005,7 @@ static bool alloc_sr_source_images(struct nv_superresolution_data *filter)
 
 
 
-/* Allocates the Super Resolution source images, these are allocated anytime the target is resized, the filter type changed, or the scale changed */
+/* Allocates the Super Resolution source images, these are allocated anytime the target is resized, the filter type changed, or the sr_scale changed */
 static bool alloc_sr_dest_images(struct nv_superresolution_data* filter)
 {
 	debug("alloc_sr_dest_images: entering");
@@ -1433,9 +1447,11 @@ static bool nv_filter_type_modified(obs_properties_t *ppts, obs_property_t *p, o
 
 	obs_property_t *p_str = obs_properties_get(ppts, S_STRENGTH);
 	obs_property_t *p_mode = obs_properties_get(ppts, S_MODE_SR);
-	obs_property_t *p_scale = obs_properties_get(ppts, S_SCALE);
+	obs_property_t *p_sr_scale = obs_properties_get(ppts, S_SR_SCALE);
+	obs_property_t *p_up_scale = obs_properties_get(ppts, S_UP_SCALE);
 
-	obs_property_set_visible(p_scale, type != S_TYPE_NONE);
+	obs_property_set_visible(p_sr_scale, type == S_TYPE_SR);
+	obs_property_set_visible(p_up_scale, type == S_TYPE_UP);
 	obs_property_set_visible(p_str, type == S_TYPE_UP);
 	obs_property_set_visible(p_mode, type == S_TYPE_SR);
 
@@ -1502,14 +1518,20 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 
 	obs_property_set_modified_callback(filter_type, nv_filter_type_modified);
 
-	obs_property_t *scale = obs_properties_add_list(filter->properties, S_SCALE,TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_t *sr_scale = obs_properties_add_list(filter->properties, S_SR_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 
 	// NOTE: This generally gives inaccurate results that will need to be manually fixed if possible when we validate the source input size of things
-	//obs_property_list_add_int(scale, TEXT_SCALE_SIZE_133x, S_SCALE_133x);
-	obs_property_list_add_int(scale, TEXT_SCALE_SIZE_15x, S_SCALE_15x);
-	obs_property_list_add_int(scale, TEXT_SCALE_SIZE_2x, S_SCALE_2x);
-	obs_property_list_add_int(scale, TEXT_SCALE_SIZE_3x, S_SCALE_3x);
-	obs_property_list_add_int(scale, TEXT_SCALE_SIZE_4x, S_SCALE_4x);
+	//obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_133x, S_SCALE_133x);
+	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_15x, S_SCALE_15x);
+	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_2x, S_SCALE_2x);
+	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_3x, S_SCALE_3x);
+	obs_property_list_add_int(sr_scale, TEXT_SRSCALE_SIZE_4x, S_SCALE_4x);
+
+	obs_property_t *up_scale = obs_properties_add_list(filter->properties, S_UP_SCALE, TEXT_SCALE, OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_15x, S_SCALE_15x);
+	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_2x, S_SCALE_2x);
+	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_3x, S_SCALE_3x);
+	obs_property_list_add_int(up_scale, TEXT_UPSCALE_SIZE_4x, S_SCALE_4x);
 
 	if (nvvfx_supports_sr)
 	{
@@ -1559,8 +1581,7 @@ static obs_properties_t *nv_superres_filter_properties(void *data)
 static void nv_superres_filter_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, S_TYPE, S_TYPE_DEFAULT);
-	obs_data_set_default_int(settings, S_SCALE, S_SCALE_DEFAULT);
-
+	
 	if (nvvfx_supports_ar)
 	{
 		obs_data_set_default_bool(settings, S_ENABLE_AR, false);
@@ -1570,11 +1591,13 @@ static void nv_superres_filter_defaults(obs_data_t *settings)
 	if (nvvfx_supports_sr)
 	{
 		obs_data_set_default_int(settings, S_MODE_SR, S_MODE_DEFAULT);
+		obs_data_set_default_int(settings, S_SR_SCALE, S_SCALE_DEFAULT);
 	}
 
 	if (nvvfx_supports_up)
 	{
 		obs_data_set_default_double(settings, S_STRENGTH, S_STRENGTH_DEFAULT);
+		obs_data_set_default_int(settings, S_UP_SCALE, S_SCALE_DEFAULT);
 	}
 }
 
@@ -1597,7 +1620,7 @@ static struct obs_source_frame *nv_superres_filter_video(void *data, struct obs_
 
 
 /*
-* We check and validate our source size, requested scale size, and color space here incase they change,
+* We check and validate our source size, requested sr_scale size, and color space here incase they change,
 * if it does we need to recreate or resize the various image buffers used to accomodate
 */
 static void nv_superres_filter_tick(void *data, float t)
@@ -1637,7 +1660,8 @@ static void nv_superres_filter_tick(void *data, float t)
 	if (filter->apply_ar)
 	{
 		get_scale_factor(S_SCALE_AR, cx, cy, &cx_out, &cy_out);
-		filter->is_target_valid =	validate_source_size(S_SCALE_AR, cx, cy, cx_out, cy_out);
+		filter->is_target_valid = validate_scaling_aspect(cx, cy, cx_out, cy_out);
+		filter->is_target_valid = filter->is_target_valid && validate_source_size(S_SCALE_AR, cx, cy, cx_out, cy_out);
 		filter->invalid_ar_size = !filter->is_target_valid;
 	}
 
@@ -1646,7 +1670,11 @@ static void nv_superres_filter_tick(void *data, float t)
 		if (filter->type != S_TYPE_NONE)
 		{
 			get_scale_factor(filter->scale, cx, cy, &cx_out, &cy_out);
-			filter->is_target_valid = validate_source_size(filter->scale, cx, cy, cx_out, cy_out);
+			filter->is_target_valid = validate_scaling_aspect(cx, cy, cx_out, cy_out);
+			if (filter->is_target_valid && filter->type != S_TYPE_UP)
+			{
+				filter->is_target_valid = validate_source_size(filter->scale, cx, cy, cx_out, cy_out);
+			}
 			filter->invalid_sr_size = !filter->is_target_valid;
 		}
 	}
