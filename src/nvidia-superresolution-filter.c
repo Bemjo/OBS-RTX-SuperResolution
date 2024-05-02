@@ -124,7 +124,7 @@ static const uint32_t nv_type_resolutions[S_SCALE_N][2][2] =
 	{{160, 90}, {1920, 1080}}, // S_SCALE_NONE, index is S_SCALE_NONE but also doubles as Artifact Reduction minimum scale index
 	{{160, 90}, {3840, 2160}}, // S_SCALE_133x
 	{{160, 90}, {3840, 2160}}, // S_SCALE_15x
-	{{160, 90}, {1920, 1080}}, // S_SCALE_2x
+	{{160, 90}, {3840, 2160}}, // S_SCALE_2x
 	{{160, 90}, {1280, 720}},  // S_SCALE_3x
 	{{160, 90}, {960, 540}}    // S_SCALE_4x
 };
