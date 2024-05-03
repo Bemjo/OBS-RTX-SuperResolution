@@ -35,10 +35,13 @@ See the [Examples Gallery](https://github.com/Bemjo/OBS-RTX-SuperResolution-Gall
 ![Upscaling Type](docs/upscaler.png)  
 
 4. Choose a scale that is valid for your source resolution.  
+  * NOTE: Super Resolution has limits on the accepted resolutions of your source size, it cannot accept anything lower than 160x90, with the maximum limit defined by the scaling multiplier. Aspect ratios other than 16:9 are supported.  
+  * Upscaling does not have these limits, any multiplier will work with any size input, limited only by your hardware.  
+  * These are the only options available, as this is a limit of the nVidia VFX SDK. 4/3x is not supported. [See Table 1.](https://docs.nvidia.com/deeplearning/maxine/vfx-sdk-programming-guide/index.html#super-res-filter)  
 ![Scale Multiplier](docs/scale.png)  
 
 5. Optional. Apply Artifact Reduction pre-pass and select AR Mode.  
-  * NOTE: Artifact Reduction has more limited resolution ranged available to it - your sources cannot be smaller than 160x90 or larger than 1920x1080 if you wish to use Artifact Reduction  
+  * NOTE: Artifact Reduction has more limited resolution ranged available to it - your sources cannot be smaller than 160x90 or larger than 1920x1080 if you wish to use Artifact Reduction. Other aspect ratios besides 16:9 are allowed.  
 ![Artifact Reduction](docs/ar.png)  
 
 6. Click Verify Source Button.
@@ -60,7 +63,11 @@ See the [Examples Gallery](https://github.com/Bemjo/OBS-RTX-SuperResolution-Gall
 
 ## Build System Configuration
 
+See the [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate) for more information about the build system.
+
 To create a build configuration, `cmake` needs to be installed on the system. The plugin template supports CMake presets using the `CMakePresets.json` file and ships with default presets:
+
+While linux build configurations are supplied, currently only windows builds are supported. Linux support will come at a later date TBD.
 
 * `windows-x64`
     * Windows 64-bit architecture
@@ -77,15 +84,6 @@ To create a build configuration, `cmake` needs to be installed on the system. Th
     * Defaults to `RelWithDebInfo` build configuration
 * `linux-ci-x86_64`
     * Inherits from `linux-x86_64`
-    * Enables compile warnings as error
-* `linux-aarch64`
-    * Provided as an experimental preview feature
-    * Linux aarch64 (ARM64) architecture
-    * Defaults to Qt version `6`
-    * Defaults to Ninja as build tool
-    * Defaults to `RelWithDebInfo` build configuration
-* `linux-ci-aarch64`
-    * Inherits from `linux-aarch64`
     * Enables compile warnings as error
 
 Presets can be either specified on the command line (`cmake --preset <PRESET>`) or via the associated select field in the CMake Windows GUI. Only presets appropriate for the current build host are available for selection.

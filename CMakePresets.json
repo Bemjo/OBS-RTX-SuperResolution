@@ -63,35 +63,6 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_COMPILE_WARNING_AS_ERROR": true
       }
-    },
-    {
-      "name": "linux-aarch64",
-      "displayName": "Linux aarch64",
-      "description": "Build for Linux aarch64",
-      "binaryDir": "${sourceDir}/build_aarch64",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
-      "generator": "Ninja",
-      "warnings": {"dev": true, "deprecated": true},
-      "cacheVariables": {
-        "QT_VERSION": "6",
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "ENABLE_FRONTEND_API": false,
-        "ENABLE_QT": false
-      }
-    },
-    {
-      "name": "linux-ci-aarch64",
-      "inherits": ["linux-aarch64"],
-      "displayName": "Linux aarch64 CI build",
-      "description": "Build for Linux aarch64 on CI",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_COMPILE_WARNING_AS_ERROR": true
-      }
     }
   ],
   "buildPresets": [
@@ -121,20 +92,6 @@
       "configurePreset": "linux-ci-x86_64",
       "displayName": "Linux x86_64 CI",
       "description": "Linux CI build for x86_64",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "linux-aarch64",
-      "configurePreset": "linux-aarch64",
-      "displayName": "Linux aarch64",
-      "description": "Linux build for aarch64",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "linux-ci-aarch64",
-      "configurePreset": "linux-ci-aarch64",
-      "displayName": "Linux aarch64 CI",
-      "description": "Linux CI build for aarch64",
       "configuration": "RelWithDebInfo"
     }
   ]
