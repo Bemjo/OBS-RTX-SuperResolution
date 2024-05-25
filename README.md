@@ -15,13 +15,14 @@ See the [Examples Gallery](https://github.com/Bemjo/OBS-RTX-SuperResolution-Gall
 ## Prequisites:
 * OBS version 29.1.2 or higher  
 * An nVidia RTX GPU (2060 or better)  
-* Windows. (Linux and MacOS are not supported currently.) 
+* Windows. (Linux and MacOS are not supported currently.)  
 * The nVidia Video Effects SDK for your GPU, this can be obtained here https://www.nvidia.com/en-us/geforce/broadcasting/broadcast-sdk/resources/  
 
 ![nVidia Video Effects SDK](docs/nvidia.png)
 
-## Installation:
-* Copy the files over your obs-studio installation folder
+## Manual Installation:
+* Unzip the files where your obs-studio installation directory is located.  
+  eg/ If your OBS Studio is installed to the default directory C:/Program Files/obs-studio, unzip the contents to C:/Program Files/  
 
 ## Usage
 
