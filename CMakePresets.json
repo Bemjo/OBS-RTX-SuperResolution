@@ -7,9 +7,18 @@
   },
   "configurePresets": [
     {
+      "name": "template",
+      "hidden": true,
+      "cacheVariables": {
+        "ENABLE_FRONTEND_API": false,
+        "ENABLE_QT": false
+      }
+    },
+    {
       "name": "windows-x64",
       "displayName": "Windows x64",
       "description": "Build for Windows x64",
+      "inherits": ["template"],
       "binaryDir": "${sourceDir}/build_x64",
       "condition": {
         "type": "equals",
@@ -20,10 +29,7 @@
       "architecture": "x64",
       "warnings": {"dev": true, "deprecated": true},
       "cacheVariables": {
-        "QT_VERSION": "6",
-        "CMAKE_SYSTEM_VERSION": "10.0.18363.657",
-        "ENABLE_FRONTEND_API": false,
-        "ENABLE_QT": false
+        "CMAKE_SYSTEM_VERSION": "10.0.18363.657"
       }
     },
     {
@@ -32,35 +38,6 @@
       "displayName": "Windows x64 CI build",
       "description": "Build for Windows x64 on CI",
       "cacheVariables": {
-        "CMAKE_COMPILE_WARNING_AS_ERROR": true
-      }
-    },
-    {
-      "name": "linux-x86_64",
-      "displayName": "Linux x86_64",
-      "description": "Build for Linux x86_64",
-      "binaryDir": "${sourceDir}/build_x86_64",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
-      "generator": "Ninja",
-      "warnings": {"dev": true, "deprecated": true},
-      "cacheVariables": {
-        "QT_VERSION": "6",
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "ENABLE_FRONTEND_API": false,
-        "ENABLE_QT": false
-      }
-    },
-    {
-      "name": "linux-ci-x86_64",
-      "inherits": ["linux-x86_64"],
-      "displayName": "Linux x86_64 CI build",
-      "description": "Build for Linux x86_64 on CI",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_COMPILE_WARNING_AS_ERROR": true
       }
     }
@@ -78,20 +55,6 @@
       "configurePreset": "windows-ci-x64",
       "displayName": "Windows x64 CI",
       "description": "Windows CI build for x64 (RelWithDebInfo configuration)",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "linux-x86_64",
-      "configurePreset": "linux-x86_64",
-      "displayName": "Linux x86_64",
-      "description": "Linux build for x86_64",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "linux-ci-x86_64",
-      "configurePreset": "linux-ci-x86_64",
-      "displayName": "Linux x86_64 CI",
-      "description": "Linux CI build for x86_64",
       "configuration": "RelWithDebInfo"
     }
   ]

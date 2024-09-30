@@ -22,8 +22,8 @@ if(ENABLE_FRONTEND_API)
 endif()
 
 if(ENABLE_QT)
-  find_qt(COMPONENTS Widgets Core)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt::Core Qt::Widgets)
+  find_package(Qt6 COMPONENTS Widgets Core)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
   target_compile_options(
     ${CMAKE_PROJECT_NAME} PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header
                                   -Wno-comma>)
@@ -35,5 +35,6 @@ if(ENABLE_QT)
 endif()
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c src/nvidia-superresolution-filter.c src/NVVideoEffectsProxy.cpp src/nvCVImageProxy.cpp)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/include/nvCVImage.h src/include/nvCVImageProxy.h src/include/nvCVStatus.h src/include/nvTransferD3D.h src/include/nvTransferD3D11.h src/include/nvvfx.h src/include/nvVideoEffects.h)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

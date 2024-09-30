@@ -48,6 +48,7 @@ string(JSON _website GET ${buildspec} website)
 string(JSON _author GET ${buildspec} author)
 string(JSON _email GET ${buildspec} email)
 string(JSON _version GET ${buildspec} version)
+string(JSON _bundleId GET ${buildspec} platformConfig macos bundleId)
 string(JSON _windowsAppUUID GET ${buildspec} uuids windowsApp)
 # cmake-format: on
 
@@ -55,6 +56,7 @@ set(PLUGIN_AUTHOR ${_author})
 set(PLUGIN_WEBSITE ${_website})
 set(PLUGIN_EMAIL ${_email})
 set(PLUGIN_VERSION ${_version})
+set(MACOS_BUNDLEID ${_bundleId})
 
 include(buildnumber)
 include(osconfig)
